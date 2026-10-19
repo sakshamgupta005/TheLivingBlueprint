@@ -20,5 +20,4 @@ export default defineConfig(({ mode }) => {
     },
   };
 });
-// Reload vite config for extension download
-
+// Reload vite config for companion chat updates

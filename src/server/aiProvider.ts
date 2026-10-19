@@ -36,6 +36,7 @@ export function parseAndValidateChatResponse(
   let rawWorkflowDiagram: unknown;
   let isComplete: boolean | undefined;
   let nextSpeaker: 'dog' | 'cat' | undefined;
+  let rootFollowUps: unknown;
 
   if (Array.isArray(parsed)) {
     rawReplies = parsed;
@@ -52,12 +53,15 @@ export function parseAndValidateChatResponse(
       rawReplies = obj.replies;
     } else if (obj.reply && typeof obj.reply === 'object') {
       rawReplies = [obj.reply];
-    } else if (typeof obj.speaker === 'string' && typeof obj.text === 'string') {
+    } else if (typeof obj.speaker === 'string' && (typeof obj.text === 'string' || typeof obj.message === 'string' || typeof obj.content === 'string')) {
       rawReplies = [obj];
     } else {
       rawReplies = obj.replies;
     }
     rawWorkflowDiagram = obj.workflowDiagram;
+    if (Array.isArray(obj.suggestedFollowUps)) {
+      rootFollowUps = obj.suggestedFollowUps;
+    }
     if (typeof obj.isComplete === 'boolean') {
       isComplete = obj.isComplete;
     }
@@ -76,7 +80,6 @@ export function parseAndValidateChatResponse(
     throw new Error('Model output must contain at least one message.');
   }
 
-  const validSpeakers = new Set(['dog', 'cat']);
   const validatedReplies: CompanionReplyMessage[] = [];
   const inspectedPaths = repoContext?.inspectedFiles?.map((f) => f.path).filter(Boolean) || [];
 
@@ -85,19 +88,38 @@ export function parseAndValidateChatResponse(
       throw new Error('Message entry must be an object.');
     }
 
+    const itemObj = item as Record<string, unknown>;
     const {
       speaker,
       text,
+      message,
+      content,
       evidenceReference,
       workflowDiagram: itemDiagram,
       suggestedFollowUps: itemFollowUps,
-    } = item as Record<string, unknown>;
+    } = itemObj;
 
-    if (typeof speaker !== 'string' || !validSpeakers.has(speaker.toLowerCase())) {
+    const rawSpeaker = typeof speaker === 'string' ? speaker.trim().toLowerCase() : '';
+    let normalizedSpeaker: 'dog' | 'cat' | null = null;
+    if (rawSpeaker === 'dog' || rawSpeaker.includes('barkley')) {
+      normalizedSpeaker = 'dog';
+    } else if (rawSpeaker === 'cat' || rawSpeaker.includes('cleo')) {
+      normalizedSpeaker = 'cat';
+    }
+
+    if (!normalizedSpeaker) {
       throw new Error(`Invalid speaker ID: "${speaker}". Expected "dog" or "cat".`);
     }
 
-    if (typeof text !== 'string' || text.trim().length === 0) {
+    const rawText = (typeof text === 'string' && text.trim().length > 0)
+      ? text
+      : (typeof message === 'string' && message.trim().length > 0)
+      ? message
+      : (typeof content === 'string' && content.trim().length > 0)
+      ? content
+      : '';
+
+    if (!rawText || rawText.trim().length === 0) {
       throw new Error('Message text cannot be empty.');
     }
 
@@ -114,8 +136,7 @@ export function parseAndValidateChatResponse(
       if (clean.length > 0) validatedFollowUps = clean;
     }
 
-    const normalizedSpeaker = speaker.toLowerCase() as 'dog' | 'cat';
-    let cleanText = text.trim();
+    let cleanText = rawText.trim();
 
     // Cat (Cleo) responses must be ultra-concise and technical (bound to 350 chars max)
     if (normalizedSpeaker === 'cat') {
@@ -143,6 +164,21 @@ export function parseAndValidateChatResponse(
           : undefined,
       suggestedFollowUps: validatedFollowUps,
     });
+  }
+
+  if (rootFollowUps && Array.isArray(rootFollowUps) && validatedReplies.length > 0) {
+    const hasAnyFollowUps = validatedReplies.some(
+      (r) => r.suggestedFollowUps && r.suggestedFollowUps.length > 0
+    );
+    if (!hasAnyFollowUps) {
+      const cleanRoot = rootFollowUps
+        .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+        .slice(0, 3)
+        .map((s) => s.trim().slice(0, 120));
+      if (cleanRoot.length > 0) {
+        validatedReplies[validatedReplies.length - 1].suggestedFollowUps = cleanRoot;
+      }
+    }
   }
 
   let validatedDiagram: WorkflowDiagram | undefined;
