@@ -145,17 +145,7 @@ export function scoreFileForInspection(path: string): number {
 
   // 3b. Key documentation files (docs, contributing, architecture, team)
   if (category === 'documentation') {
-    if (
-      lower.includes('team') ||
-      lower.includes('contribut') ||
-      lower.includes('architect') ||
-      lower.includes('overview') ||
-      lower.includes('guide') ||
-      lower.includes('about')
-    ) {
-      return 89;
-    }
-    return 80;
+    return 68;
   }
 
   // 4. Core entry points
@@ -178,7 +168,30 @@ export function scoreFileForInspection(path: string): number {
     return 85;
   }
 
-  // 6. Core business logic, schemas, and models
+  // 5b. UI Presentation & Components
+  if (
+    /(?:^|\/)(?:components|views|pages|templates)\//i.test(lower) ||
+    /\.(?:tsx|jsx|vue|svelte)$/i.test(basename)
+  ) {
+    return 84;
+  }
+
+  // 5c. Authentication & Security
+  if (
+    /(?:^|\/)(?:auth|session|security)\//i.test(lower) ||
+    /(?:auth|login|session|jwt|token|credential|permission)\.(?:ts|js|py|go|rs)$/i.test(basename)
+  ) {
+    return 83;
+  }
+
+  // 6. Core business logic, schemas, models, and validation
+  if (
+    /(?:^|\/)(?:validation|validators?)\//i.test(lower) ||
+    /(?:validation|validator|rules?)\.(?:ts|js|py|go|rs)$/i.test(basename)
+  ) {
+    return 82;
+  }
+
   if (
     /(?:^|\/)(?:schemas?|models?|entities|domain|services?|store)\//i.test(lower) ||
     /(?:schema|model|entity|service|repository)\.(?:ts|js|py|go|rs|prisma|sql)$/i.test(basename)
@@ -268,8 +281,38 @@ export function prioritizeFilesForInspection(
 
   validBlobs.sort((a, b) => scoreFileForInspection(b.path) - scoreFileForInspection(a.path));
 
-  const candidates = validBlobs.slice(0, boundedMaxFiles);
-  const remaining = validBlobs.slice(boundedMaxFiles);
+  // Balanced architectural selection: cap non-source categories (documentation, configs)
+  // so they do not starve domain modules, components, routes, models, and tests.
+  const candidates: GitTreeEntry[] = [];
+  const deferred: GitTreeEntry[] = [];
+  let docCount = 0;
+  let configCount = 0;
+
+  for (const blob of validBlobs) {
+    const cat = categorizeFile(blob.path);
+    if (cat === 'documentation') {
+      if (docCount >= 2 && candidates.length < boundedMaxFiles) {
+        deferred.push(blob);
+        continue;
+      }
+      docCount++;
+    } else if (cat === 'config') {
+      if (configCount >= 3 && candidates.length < boundedMaxFiles) {
+        deferred.push(blob);
+        continue;
+      }
+      configCount++;
+    }
+    candidates.push(blob);
+    if (candidates.length >= boundedMaxFiles) break;
+  }
+
+  while (candidates.length < boundedMaxFiles && deferred.length > 0) {
+    candidates.push(deferred.shift()!);
+  }
+
+  const candidatePaths = new Set(candidates.map((c) => c.path));
+  const remaining = validBlobs.filter((b) => !candidatePaths.has(b.path));
 
   for (const rem of remaining) {
     skipped.push({ path: rem.path, reason: 'scan_file_budget_exceeded' });

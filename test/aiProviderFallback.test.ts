@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { executeAiChat } from '../src/server/aiProvider.ts';
 import { executeRoomInvestigation } from '../src/server/investigationProvider.ts';
@@ -9,10 +9,14 @@ import {
   isValidModelIdentifier,
 } from '../src/server/aiProviderRunner.ts';
 import { redactSensitiveInfo } from '../src/server/errorClassifier.ts';
+import { clearResponseCache } from '../src/server/responseCache.ts';
 import type { ChatApiRequest } from '../src/server/types.ts';
 import type { InvestigateApiRequest } from '../src/domain/investigation/types.ts';
 
 describe('T21 — Groq Automatic AI Fallback & Recovery', () => {
+  beforeEach(() => {
+    clearResponseCache();
+  });
   const baseChatRequest: ChatApiRequest = {
     message: 'Explain how task creation works and whether titles are validated.',
     repoContext: {
@@ -710,6 +714,7 @@ describe('T21 — Groq Automatic AI Fallback & Recovery', () => {
       return new Response('Not found', { status: 404 });
     };
 
+    clearResponseCache();
     const res2 = await executeAiChat(
       baseChatRequest,
       {
@@ -1120,6 +1125,7 @@ describe('T21 — Groq Automatic AI Fallback & Recovery', () => {
 
     // 2nd request: Gemini quota refills (geminiIsRateLimited = false)
     geminiIsRateLimited = false;
+    clearResponseCache();
     const res2 = await executeAiChat(baseChatRequest, env, mockFetch as unknown as typeof fetch);
 
     // Primary (Gemini) must be automatically picked without sticky fallback lock-in

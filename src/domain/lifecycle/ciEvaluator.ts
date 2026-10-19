@@ -68,6 +68,8 @@ export async function fetchCommitCheckRuns(
   const checks: GitHubCheckRun[] = [];
   const warnings: string[] = [];
 
+  let rateLimitedOrDenied = false;
+
   try {
     const checkRes = await fetchFn(
       `https://api.github.com/repos/${owner}/${repo}/commits/${commitSha}/check-runs`,
@@ -106,6 +108,7 @@ export async function fetchCommitCheckRuns(
         }
       }
     } else if (checkRes.status === 403 || checkRes.status === 401) {
+      rateLimitedOrDenied = true;
       warnings.push(`GitHub API permission denied or rate limit exceeded (HTTP ${checkRes.status}) when fetching CI check runs.`);
     } else if (checkRes.status !== 404) {
       warnings.push(`GitHub check-runs API returned HTTP ${checkRes.status}.`);
@@ -115,7 +118,7 @@ export async function fetchCommitCheckRuns(
   }
 
   // Fallback 1: GitHub Actions workflow runs for this exact commit
-  if (checks.length === 0) {
+  if (checks.length === 0 && !rateLimitedOrDenied) {
     try {
       const actionsRes = await fetchFn(
         `https://api.github.com/repos/${owner}/${repo}/actions/runs?head_sha=${commitSha}&per_page=10`,
@@ -146,7 +149,7 @@ export async function fetchCommitCheckRuns(
   }
 
   // Fallback 2: commit status API if no check runs found
-  if (checks.length === 0) {
+  if (checks.length === 0 && !rateLimitedOrDenied) {
     try {
       const statusRes = await fetchFn(
         `https://api.github.com/repos/${owner}/${repo}/commits/${commitSha}/status`,

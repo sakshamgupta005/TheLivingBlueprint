@@ -51,7 +51,7 @@ export const RepoConnectBar: React.FC<RepoConnectBarProps> = ({
     try {
       const result = await scanGitHubRepository(
         repoUrl,
-        { maxFilesToInspect: 12 },
+        { maxFilesToInspect: 20 },
         (_stage: ScanStage, msg: string) => {
           setStageMessage(msg);
         }

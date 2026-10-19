@@ -78,5 +78,10 @@ describe('VS Code Extension - Workspace Scanner & Status Engine', () => {
     assert(result.pillars.length > 0, 'Should infer infrastructure pillars');
     assert(result.projectEvaluation, 'Should provide projectEvaluation');
     assert.strictEqual(result.projectEvaluation.rooms.length, result.rooms.length);
+
+    // Verify CanvasGraph generation from layoutEngine
+    assert(result.graph, 'Should generate CanvasGraph');
+    assert(result.graph.nodes.length > 0, 'Graph should contain nodes');
+    assert.strictEqual(result.graph.viewMode, 'modules');
   });
 });

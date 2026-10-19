@@ -468,6 +468,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       }
 
       const data: ChatApiResponse = await response.json();
+      clearTimeout(stageTimer1);
+      clearTimeout(stageTimer2);
 
       if (revealCancelledRef.current || prevProjectKeyRef.current !== requestProjectKey) {
         return;
@@ -485,7 +487,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         return;
       }
 
-      // Model returned valid replies (1 or 2 messages)
+      // Model returned valid replies in single response (dog, dog?, cat, dog...)
       const companionReplies: CompanionReplyMessage[] =
         data.replies && data.replies.length > 0
           ? data.replies
@@ -498,51 +500,65 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         return;
       }
 
-      // First speaker (Barkley): render immediately
-      const firstReply = companionReplies[0];
-      const firstItem: ChatMessageItem = {
-        id: `reply-${Date.now()}-0-${Math.random().toString(36).slice(2, 6)}`,
-        sender: firstReply.speaker,
-        text: firstReply.text,
-        evidenceReference: firstReply.speaker === 'cat' ? firstReply.evidenceReference : undefined,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        timing: companionReplies.length === 1 ? data.timing : undefined,
-        workflowDiagram: firstReply.workflowDiagram || data.workflowDiagram,
-        providerUsed: data.providerUsed,
-        suggestedFollowUps: firstReply.suggestedFollowUps,
-        cached: Boolean(data.cached || data.timing?.cached),
-      };
+      let currentAccumulated = [...newMessages];
 
-      let currentAccumulated = [...newMessages, firstItem];
-      updateAndNotifyMessages(currentAccumulated);
+      // Progressive conversational reveal with character thinking animations & natural delays
+      for (let i = 0; i < companionReplies.length; i++) {
+        if (revealCancelledRef.current || prevProjectKeyRef.current !== requestProjectKey) {
+          return;
+        }
 
-      // If second speaker exists (Cleo chiming in with technical review)
-      if (companionReplies.length > 1) {
-        const secondReply = companionReplies[1];
-        setActiveTypingSpeaker(secondReply.speaker);
+        const reply = companionReplies[i];
 
-        // Natural conversational breathing pause before Cleo reviews (300ms)
-        await new Promise((res) => setTimeout(res, 300));
+        // Trigger thinking animation for this specific speaker
+        setActiveTypingSpeaker(reply.speaker);
+        if (reply.speaker === 'cat') {
+          setProgressStage('Cleo is analyzing technical facts...');
+        } else if (i > 0 && companionReplies[i - 1].speaker === 'cat') {
+          setProgressStage('Barkley is explaining what Cleo pointed out...');
+        } else if (i > 0) {
+          setProgressStage('Barkley is continuing thoughts...');
+        } else {
+          setProgressStage('Barkley is explaining...');
+        }
 
-        if (!revealCancelledRef.current && prevProjectKeyRef.current === requestProjectKey) {
-          const secondItem: ChatMessageItem = {
-            id: `reply-${Date.now()}-1-${Math.random().toString(36).slice(2, 6)}`,
-            sender: secondReply.speaker,
-            text: secondReply.text,
-            evidenceReference: secondReply.evidenceReference,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            timing: data.timing,
-            workflowDiagram: secondReply.workflowDiagram,
-            providerUsed: data.providerUsed,
-            suggestedFollowUps: secondReply.suggestedFollowUps,
-            cached: Boolean(data.cached || data.timing?.cached),
-          };
-          currentAccumulated = [...currentAccumulated, secondItem];
-          updateAndNotifyMessages(currentAccumulated);
+        // Pacing delay: for reply 0 dog was already thinking during fetch (brief 350ms breather);
+        // for subsequent replies (or dog continuing / cat joining / dog explaining), brief natural human pause (650ms-850ms)
+        const delay = i === 0 ? 350 : Math.min(850, Math.max(650, reply.text.length * 3));
+        await new Promise((res) => setTimeout(res, delay));
+
+        if (revealCancelledRef.current || prevProjectKeyRef.current !== requestProjectKey) {
+          return;
+        }
+
+        const isLastReply = i === companionReplies.length - 1;
+        const item: ChatMessageItem = {
+          id: `reply-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+          sender: reply.speaker,
+          text: reply.text,
+          evidenceReference: reply.speaker === 'cat' ? reply.evidenceReference : undefined,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          timing: isLastReply ? data.timing : undefined,
+          workflowDiagram: reply.workflowDiagram || (i === 0 ? data.workflowDiagram : undefined),
+          providerUsed: data.providerUsed,
+          suggestedFollowUps: isLastReply
+            ? reply.suggestedFollowUps || companionReplies[0].suggestedFollowUps
+            : reply.suggestedFollowUps,
+          cached: Boolean(data.cached || data.timing?.cached),
+        };
+
+        currentAccumulated = [...currentAccumulated, item];
+        updateAndNotifyMessages(currentAccumulated);
+
+        // Transition typing speaker for the next turn
+        if (!isLastReply) {
+          const nextSpeaker = companionReplies[i + 1].speaker;
+          setActiveTypingSpeaker(nextSpeaker);
         }
       }
 
       setActiveTypingSpeaker(null);
+      setProgressStage('');
       setFailedMessage(null);
       setErrorInfo(null);
     } catch (err: unknown) {

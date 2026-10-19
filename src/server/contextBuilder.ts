@@ -489,11 +489,12 @@ export function buildSystemPrompt(request: ChatApiRequest): string {
   const rawFindings = request.investigationFindings || (repo as Record<string, unknown> | undefined)?.investigationFindings;
   const findingsCount = rawFindings && typeof rawFindings === 'object' ? Object.keys(rawFindings).length : 0;
 
+  const cleanMsgKey = (request.message || '').trim().toLowerCase().slice(0, 80);
   const promptCacheKey = request.isFragmentRequest || request.bypassCache
     ? null
     : repo
-    ? `${repo.owner}/${repo.repo}##${repo.commitSha || 'no-commit'}##${request.selectedRoomId || 'none'}##${request.explanationLevel || 'beginner'}##${includeDiagram ? 'diag' : 'nodiag'}##${(repo.inspectedFiles || []).length}##findings:${findingsCount}`
-    : `no-repo##${request.selectedRoomId || 'none'}##${request.explanationLevel || 'beginner'}##${includeDiagram ? 'diag' : 'nodiag'}##findings:${findingsCount}`;
+    ? `${repo.owner}/${repo.repo}##${repo.commitSha || 'no-commit'}##${request.selectedRoomId || 'none'}##${request.explanationLevel || 'beginner'}##${includeDiagram ? 'diag' : 'nodiag'}##${(repo.inspectedFiles || []).length}##findings:${findingsCount}##${cleanMsgKey}`
+    : `no-repo##${request.selectedRoomId || 'none'}##${request.explanationLevel || 'beginner'}##${includeDiagram ? 'diag' : 'nodiag'}##findings:${findingsCount}##${cleanMsgKey}`;
 
   if (promptCacheKey) {
     const cachedPrompt = systemPromptCache.get(promptCacheKey);
@@ -789,8 +790,14 @@ CONVERSATION LENGTH & NATURAL FLEXIBILITY:
 - STYLE REFERENCE EXAMPLE:
   "The problem is that the code checks whether the title is an empty string, but a string containing only spaces isn't technically empty. So it slips past validation. The code trims those spaces later, which can leave an empty title behind. The failing test checks exactly this case."
   (Produce your own context-grounded answer following this natural, explanatory style).
-- Do NOT force the characters to alternate, repeat greetings, or always produce two replies. Return Barkley alone, both characters, or another valid response pattern supported by the schema.
-- ONE SHARED REQUEST: Both voices (when Cleo joins) are produced in this single response. Never require a second API call.
+- COLLABORATIVE MULTI-TURN DIALOGUE FORMAT (HUMAN-LIKE CONVERSATIONAL FLOW):
+  When answering questions about the architecture, codebase, or bugs, structure the "replies" array as a lively, natural group conversation:
+  1. Barkley (dog) message 1: Directly answers the user's question upfront in friendly, plain English (concept & core intuition).
+  2. Barkley (dog) message 2 (when continuing thoughts): Deepens the explanation with a concrete real-world analogy or architectural breakdown.
+  3. Cleo (cat) message (when technical grounding adds value): Chimes in with her shorter, skeptical, code-grounded verification (citing exact file paths, inspected functions, line numbers, or edge cases).
+  4. Barkley (dog) closing message (when Cleo chimes in): Follows up by warmly explaining what Cleo pointed out in everyday terms ("What Cleo means is...") and offering the next exploration step.
+  (For simple greetings or quick queries, 1-2 replies is fine; avoid repeating greetings).
+- ONE SHARED REQUEST: All dialogue turns are returned together in this single response payload. Never require a second API call.
 
 ${explanationLevelInstruction}
 

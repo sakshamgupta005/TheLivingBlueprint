@@ -4,6 +4,11 @@
   "description": "Discovered architecture, component status, and deterministic evidence for your workspace.",
   "version": "0.1.0",
   "publisher": "the-living-blueprint",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/example/living-blueprint"
+  },
+  "license": "MIT",
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -47,10 +52,27 @@
         "title": "Living Blueprint: Refresh Workspace Architecture",
         "category": "Living Blueprint",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "livingBlueprint.openEditor",
+        "title": "Living Blueprint: Open Full Blueprint Canvas",
+        "category": "Living Blueprint",
+        "icon": "$(browser)"
+      },
+      {
+        "command": "livingBlueprint.setApiKey",
+        "title": "Living Blueprint: Configure AI Provider Credentials",
+        "category": "Living Blueprint",
+        "icon": "$(key)"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "livingBlueprint.openEditor",
+          "when": "view == livingBlueprint.overviewView",
+          "group": "navigation"
+        },
         {
           "command": "livingBlueprint.refresh",
           "when": "view == livingBlueprint.overviewView",
@@ -63,7 +85,8 @@
     "compile": "node build.js",
     "watch": "node build.js --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node --no-warnings --experimental-strip-types --test test/scanner.test.ts"
+    "test": "node --no-warnings --experimental-strip-types --test test/scanner.test.ts test/companion.test.ts",
+    "package": "node build.js && npx @vscode/vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",

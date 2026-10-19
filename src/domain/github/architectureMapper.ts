@@ -161,7 +161,9 @@ export function mapScanResultToHouse(scan: GitHubScanResult): {
     if (f.category === 'manifest' || f.category === 'readme' || f.category === 'documentation') continue;
     const monorepoMatch = f.path.match(/(?:packages|apps|services|modules)\/([a-zA-Z0-9_-]+)\/src\/([a-zA-Z0-9_-]+)\//i);
     const monorepoPkgMatch = f.path.match(/(?:packages|apps|services|modules)\/([a-zA-Z0-9_-]+)\//i);
+    const domainSubMatch = f.path.match(/(?:src|lib|app)\/(?:domain|features|modules|services)\/([a-zA-Z0-9_-]+)\//i);
     const srcSubMatch = f.path.match(/(?:src|lib|app)\/([a-zA-Z0-9_-]+)\//i);
+    const rootSrcMatch = f.path.match(/^(?:src|lib|app)\/([a-zA-Z0-9_-]+)\.(?:ts|tsx|js|jsx|py|go|rs|java|mjs|cjs)$/i);
     const topMatch = f.path.match(/^([a-zA-Z0-9_-]+)\//i);
 
     let folder = 'core';
@@ -169,16 +171,59 @@ export function mapScanResultToHouse(scan: GitHubScanResult): {
       folder = monorepoMatch[2].toLowerCase();
     } else if (monorepoPkgMatch && !NON_DOMAIN_FOLDERS.has(monorepoPkgMatch[1].toLowerCase())) {
       folder = monorepoPkgMatch[1].toLowerCase();
+    } else if (domainSubMatch && !NON_DOMAIN_FOLDERS.has(domainSubMatch[1].toLowerCase())) {
+      folder = domainSubMatch[1].toLowerCase();
     } else if (srcSubMatch && !NON_DOMAIN_FOLDERS.has(srcSubMatch[1].toLowerCase())) {
       folder = srcSubMatch[1].toLowerCase();
     } else if (topMatch && !NON_DOMAIN_FOLDERS.has(topMatch[1].toLowerCase())) {
       folder = topMatch[1].toLowerCase();
+    } else if (rootSrcMatch) {
+      const name = rootSrcMatch[1].toLowerCase();
+      if (!NON_DOMAIN_FOLDERS.has(name) && !['index', 'main', 'app', 'server', 'types', 'setup'].includes(name)) {
+        folder = name;
+      }
     }
 
     if (folder !== 'core') {
       const list = domainFolders.get(folder) || [];
       list.push(f);
       domainFolders.set(folder, list);
+    }
+  }
+
+  // If no domain folders were found in inspected source, discover domain folders from allPaths
+  if (domainFolders.size === 0) {
+    for (const p of allPaths) {
+      if (classified.has(p)) continue;
+      const monorepoMatch = p.match(/(?:packages|apps|services|modules)\/([a-zA-Z0-9_-]+)\/src\/([a-zA-Z0-9_-]+)\//i);
+      const monorepoPkgMatch = p.match(/(?:packages|apps|services|modules)\/([a-zA-Z0-9_-]+)\//i);
+      const domainSubMatch = p.match(/(?:src|lib|app)\/(?:domain|features|modules|services)\/([a-zA-Z0-9_-]+)\//i);
+      const srcSubMatch = p.match(/(?:src|lib|app)\/([a-zA-Z0-9_-]+)\//i);
+      const rootSrcMatch = p.match(/^(?:src|lib|app)\/([a-zA-Z0-9_-]+)\.(?:ts|tsx|js|jsx|py|go|rs|java|mjs|cjs)$/i);
+      const topMatch = p.match(/^([a-zA-Z0-9_-]+)\//i);
+
+      let folder = 'core';
+      if (monorepoMatch && !NON_DOMAIN_FOLDERS.has(monorepoMatch[2].toLowerCase())) {
+        folder = monorepoMatch[2].toLowerCase();
+      } else if (monorepoPkgMatch && !NON_DOMAIN_FOLDERS.has(monorepoPkgMatch[1].toLowerCase())) {
+        folder = monorepoPkgMatch[1].toLowerCase();
+      } else if (domainSubMatch && !NON_DOMAIN_FOLDERS.has(domainSubMatch[1].toLowerCase())) {
+        folder = domainSubMatch[1].toLowerCase();
+      } else if (srcSubMatch && !NON_DOMAIN_FOLDERS.has(srcSubMatch[1].toLowerCase())) {
+        folder = srcSubMatch[1].toLowerCase();
+      } else if (topMatch && !NON_DOMAIN_FOLDERS.has(topMatch[1].toLowerCase())) {
+        folder = topMatch[1].toLowerCase();
+      } else if (rootSrcMatch) {
+        const name = rootSrcMatch[1].toLowerCase();
+        if (!NON_DOMAIN_FOLDERS.has(name) && !['index', 'main', 'app', 'server', 'types', 'setup'].includes(name)) {
+          folder = name;
+        }
+      }
+
+      if (folder !== 'core' && !domainFolders.has(folder)) {
+        domainFolders.set(folder, []);
+        if (domainFolders.size >= 3) break;
+      }
     }
   }
 
@@ -208,6 +253,35 @@ export function mapScanResultToHouse(scan: GitHubScanResult): {
       evidenceHistory: ev,
     });
     moduleFileMap.set('room-server', serverFiles);
+  } else {
+    const uninspectedServer = allPaths.filter(
+      (p) =>
+        (/(?:server|app|index|main)\.(?:js|ts|mjs|cjs|go|py)$/i.test(p) ||
+          /(?:^|\/)(?:api|routes|controllers|endpoints|server)\//i.test(p)) &&
+        !/(?:test|tests|spec)\//i.test(p)
+    );
+    if (uninspectedServer.length > 0) {
+      const reqs: Requirement[] = [
+        { id: 'req-server-routing', title: 'HTTP Request Routing & Endpoints' },
+      ];
+      const ev: EvidenceRecord[] = [{
+        id: 'ev-server-uninspected',
+        sourceType: 'source_code',
+        description: `Discovered server and route endpoints in tree (${uninspectedServer.slice(0, 3).join(', ')}), but content was not inspected within scan budget.`,
+        timestamp,
+        reference: uninspectedServer[0],
+        targetRequirementId: 'req-server-routing',
+      }];
+      modules.push({
+        id: 'room-server',
+        name: 'HTTP Server & API Routing',
+        description: 'HTTP server configuration, route dispatching, and request lifecycle.',
+        layer: 'service',
+        requirements: reqs,
+        evidenceHistory: ev,
+      });
+      moduleFileMap.set('room-server', []);
+    }
   }
 
   // B. Specific Domain Subsystems (e.g. Task Domain & Storage)
@@ -219,14 +293,23 @@ export function mapScanResultToHouse(scan: GitHubScanResult): {
         : `${folder.charAt(0).toUpperCase() + folder.slice(1)} Domain & State`;
     const reqId = `req-${folder}-domain`;
     const reqs: Requirement[] = [{ id: reqId, title: `${cleanTitle} Operations` }];
-    const ev: EvidenceRecord[] = files.map((f) => ({
-      id: `ev-${folder}-${f.path.replace(/[^a-zA-Z0-9]/g, '_')}`,
-      sourceType: 'source_code',
-      description: `Discovered domain implementation in ${f.path}`,
-      timestamp,
-      reference: f.path,
-      targetRequirementId: reqId,
-    }));
+    const ev: EvidenceRecord[] = files.length > 0
+      ? files.map((f) => ({
+          id: `ev-${folder}-${f.path.replace(/[^a-zA-Z0-9]/g, '_')}`,
+          sourceType: 'source_code',
+          description: `Discovered domain implementation in ${f.path}`,
+          timestamp,
+          reference: f.path,
+          targetRequirementId: reqId,
+        }))
+      : [{
+          id: `ev-${folder}-uninspected`,
+          sourceType: 'source_code',
+          description: `Discovered ${cleanTitle} in repository tree, but content was not inspected within scan budget.`,
+          timestamp,
+          reference: folder,
+          targetRequirementId: reqId,
+        }];
     modules.push({
       id: cleanId,
       name: cleanTitle,
@@ -260,6 +343,30 @@ export function mapScanResultToHouse(scan: GitHubScanResult): {
       evidenceHistory: ev,
     });
     moduleFileMap.set('room-validation', validationFiles);
+  } else {
+    const uninspectedVal = allPaths.filter((p) => /(?:validation|validators?|rules?|schemas?)\.(?:js|ts|mjs|cjs|py)$/i.test(p) || /(?:^|\/)(?:validation|validators|schemas)\//i.test(p));
+    if (uninspectedVal.length > 0) {
+      const reqs: Requirement[] = [
+        { id: 'req-validation-rules', title: 'Input Validation & Request Sanitization' },
+      ];
+      const ev: EvidenceRecord[] = [{
+        id: 'ev-val-uninspected',
+        sourceType: 'source_code',
+        description: `Discovered input validation files in tree (${uninspectedVal.slice(0, 3).join(', ')}), but content was not inspected within scan budget.`,
+        timestamp,
+        reference: uninspectedVal[0],
+        targetRequirementId: 'req-validation-rules',
+      }];
+      modules.push({
+        id: 'room-validation',
+        name: 'Input Validation & Schema',
+        description: 'Request validation schemas, input sanitization, and data integrity constraints.',
+        layer: 'core',
+        requirements: reqs,
+        evidenceHistory: ev,
+      });
+      moduleFileMap.set('room-validation', []);
+    }
   }
 
   // D. Authentication & Security (ONLY if authentic files exist)
@@ -284,6 +391,30 @@ export function mapScanResultToHouse(scan: GitHubScanResult): {
       evidenceHistory: ev,
     });
     moduleFileMap.set('room-auth', authFiles);
+  } else {
+    const uninspectedAuth = allPaths.filter((p) => /(?:auth|login|session|jwt|token|credential|permission)\.(?:js|ts|mjs|cjs|py)$/i.test(p) || /(?:^|\/)(?:auth|session|security)\//i.test(p));
+    if (uninspectedAuth.length > 0) {
+      const reqs: Requirement[] = [
+        { id: 'req-auth-access', title: 'Access Control & Authentication' },
+      ];
+      const ev: EvidenceRecord[] = [{
+        id: 'ev-auth-uninspected',
+        sourceType: 'source_code',
+        description: `Discovered authentication files in tree (${uninspectedAuth.slice(0, 3).join(', ')}), but content was not inspected within scan budget.`,
+        timestamp,
+        reference: uninspectedAuth[0],
+        targetRequirementId: 'req-auth-access',
+      }];
+      modules.push({
+        id: 'room-auth',
+        name: 'Authentication & Access Control',
+        description: 'User authentication, session tokens, and access control.',
+        layer: 'service',
+        requirements: reqs,
+        evidenceHistory: ev,
+      });
+      moduleFileMap.set('room-auth', []);
+    }
   }
 
   // E. UI Presentation Layer (ONLY if UI components exist)
@@ -308,6 +439,30 @@ export function mapScanResultToHouse(scan: GitHubScanResult): {
       evidenceHistory: ev,
     });
     moduleFileMap.set('room-ui', uiFiles);
+  } else {
+    const uninspectedUi = allPaths.filter((p) => /(?:^|\/)(?:components|views|pages|templates)\//i.test(p) || /\.(?:tsx|jsx|vue|svelte)$/i.test(p));
+    if (uninspectedUi.length > 0) {
+      const reqs: Requirement[] = [
+        { id: 'req-ui-views', title: 'UI Component Rendering & Views' },
+      ];
+      const ev: EvidenceRecord[] = [{
+        id: 'ev-ui-uninspected',
+        sourceType: 'source_code',
+        description: `Discovered UI presentation files in tree (${uninspectedUi.slice(0, 3).join(', ')}), but content was not inspected within scan budget.`,
+        timestamp,
+        reference: uninspectedUi[0],
+        targetRequirementId: 'req-ui-views',
+      }];
+      modules.push({
+        id: 'room-ui',
+        name: 'UI Components & Views',
+        description: 'User interface components, presentation templates, and view rendering.',
+        layer: 'service',
+        requirements: reqs,
+        evidenceHistory: ev,
+      });
+      moduleFileMap.set('room-ui', []);
+    }
   }
 
   // F. Database / Persistence Layer (ONLY if db files exist)
@@ -332,6 +487,30 @@ export function mapScanResultToHouse(scan: GitHubScanResult): {
       evidenceHistory: ev,
     });
     moduleFileMap.set('room-database', dbFiles);
+  } else {
+    const uninspectedDb = allPaths.filter((p) => /(?:schema\.prisma|migrations?\/|typeorm|alembic\/|prisma\/|(?:database|db|models?|repository)\.(?:js|ts|mjs|cjs|py|go|rs|sqlite|sql)|database\.sqlite|store\.sqlite)/i.test(p));
+    if (uninspectedDb.length > 0) {
+      const reqs: Requirement[] = [
+        { id: 'req-db-schema', title: 'Database Schema & Persistence' },
+      ];
+      const ev: EvidenceRecord[] = [{
+        id: 'ev-db-uninspected',
+        sourceType: 'source_code',
+        description: `Discovered database configuration/schema in tree (${uninspectedDb.slice(0, 3).join(', ')}), but content was not inspected within scan budget.`,
+        timestamp,
+        reference: uninspectedDb[0],
+        targetRequirementId: 'req-db-schema',
+      }];
+      modules.push({
+        id: 'room-database',
+        name: 'Data Persistence & Storage',
+        description: 'Database models, connection pooling, and persistence migrations.',
+        layer: 'foundation',
+        requirements: reqs,
+        evidenceHistory: ev,
+      });
+      moduleFileMap.set('room-database', []);
+    }
   }
 
   // G. Automated Tests & Quality (ONLY if test files or CI runs exist)

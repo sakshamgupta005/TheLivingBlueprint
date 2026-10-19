@@ -1,6 +1,5 @@
 import type { WorkspaceBlueprintData } from './workspaceScanner.ts';
 import { executeAiWithFallback, type AiExecutionRequest } from '../../src/server/aiProviderRunner.ts';
-import { parseAndValidateChatResponse } from '../../src/server/aiProvider.ts';
 import { buildSystemPrompt } from '../../src/server/contextBuilder.ts';
 
 export interface EvidenceRef {
@@ -62,6 +61,31 @@ function pathBasename(p: string): string {
   return p.split('/').pop() || p;
 }
 
+export function parseCompanionReplies(rawJsonText: string): Array<{ speaker: 'dog' | 'cat'; text: string }> {
+  let cleaned = rawJsonText.trim();
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  }
+  try {
+    const parsed = JSON.parse(cleaned);
+    const rawList = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed.replies)
+      ? parsed.replies
+      : parsed.speaker && parsed.text
+      ? [parsed]
+      : [];
+    return rawList
+      .filter((item: any) => item && (item.speaker === 'dog' || item.speaker === 'cat') && typeof item.text === 'string')
+      .map((item: any) => ({
+        speaker: item.speaker as 'dog' | 'cat',
+        text: String(item.text).trim(),
+      }));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Generates automatic workspace analysis grounded strictly in discovered architecture and evidence.
  * Barkley explains the architecture in friendly plain English;
@@ -77,7 +101,6 @@ export function generateAutomaticCompanionAnalysis(
   const roomNames = rooms.map((r) => r.name).join(', ');
   const totalDiscovered = data.discoveredFilesCount;
   const totalInspected = data.inspectedFilesCount;
-  const statusSummary = data.statusSummary || {};
 
   // 1. Identify primary entry point / manifest from inspected files
   const manifestFile = data.inspectedFiles.find((f) => f.category === 'manifest');
@@ -95,7 +118,6 @@ export function generateAutomaticCompanionAnalysis(
   if (entryFile) barkleyRefs.push({ file: entryFile.path, line: 1, label: entryFile.path });
 
   // 2. Barkley: Plain-English Architectural Explanation
-  const manifestName = manifestFile ? pathBasename(manifestFile.path) : 'workspace';
   const entryDesc = entryFile ? ` The primary application entry point is at ${entryFile.path}:1.` : '';
 
   const barkleyText =
@@ -201,7 +223,7 @@ export async function answerCompanionQuery(
       };
 
       const systemPrompt = buildSystemPrompt({
-        messages: [{ role: 'user', content: question }],
+        message: question,
         repoContext: {
           owner: 'local',
           repo: data.workspaceName,
@@ -236,21 +258,23 @@ export async function answerCompanionQuery(
 
       const outcome = await executeAiWithFallback(execReq, env);
       if (outcome.success) {
-        const validated = parseAndValidateChatResponse(outcome.rawText);
-        return validated.replies.map((r, idx) => {
-          const isDog = r.speaker === 'dog';
-          const refs = extractEvidenceRefs(r.text, knownPaths);
-          return {
-            id: `msg-ai-${Date.now()}-${idx}`,
-            speaker: r.speaker,
-            speakerName: isDog ? 'Barkley' : 'Cleo',
-            tagline: isDog ? 'Friendly · Architectural Teacher' : 'Sassy · Skeptical Reviewer',
-            text: r.text,
-            evidenceRefs: refs,
-            timestamp,
-            isAiGenerated: true,
-          };
-        });
+        const replies = parseCompanionReplies(outcome.rawText);
+        if (replies.length > 0) {
+          return replies.map((r, idx) => {
+            const isDog = r.speaker === 'dog';
+            const refs = extractEvidenceRefs(r.text, knownPaths);
+            return {
+              id: `msg-ai-${Date.now()}-${idx}`,
+              speaker: r.speaker,
+              speakerName: isDog ? 'Barkley' : 'Cleo',
+              tagline: isDog ? 'Friendly · Architectural Teacher' : 'Sassy · Skeptical Reviewer',
+              text: r.text,
+              evidenceRefs: refs,
+              timestamp,
+              isAiGenerated: true,
+            };
+          });
+        }
       }
     } catch {
       // Fallback cleanly to local grounded answer if external call fails

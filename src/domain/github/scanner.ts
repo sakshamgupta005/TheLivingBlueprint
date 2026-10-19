@@ -479,87 +479,142 @@ export async function scanGitHubRepository(
   // 6. Inspect Candidate Files with Total Content Byte Budget Enforcement
   let totalContentBytesInspected = 0;
   let byteBudgetExceeded = false;
+  let rawUnreachable = false;
 
-  for (const candidate of candidates) {
-    if (byteBudgetExceeded || totalContentBytesInspected >= totalScanBudgetBytes) {
-      byteBudgetExceeded = true;
-      skipped.push({ path: candidate.path, reason: 'scan_byte_budget_exceeded' });
-      continue;
+  const fetchCandidateContent = async (candidate: GitTreeEntry): Promise<string | null> => {
+    const cachedText = cachedRecord?.fileContents.get(candidate.path);
+    if (useCache && cachedText !== undefined) {
+      return cachedText;
     }
 
-    const category = categorizeFile(candidate.path);
-    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${metadata.defaultBranch}/${candidate.path}`;
-    const githubUrl = `https://github.com/${owner}/${repo}/blob/${metadata.defaultBranch}/${candidate.path}`;
+    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${metadata!.defaultBranch}/${candidate.path}`;
+    const blobUrl = candidate.url || `https://api.github.com/repos/${owner}/${repo}/git/blobs/${candidate.sha}`;
 
-    const cachedText = cachedRecord?.fileContents.get(candidate.path);
-    let text: string;
-
-    if (useCache && cachedText !== undefined) {
-      text = cachedText;
-    } else {
+    if (!rawUnreachable) {
       try {
+        const rawSignal = createTimeoutSignal(Math.min(timeoutMs, 2500));
         const fileRes = await fetchFn(rawUrl, {
           headers: baseHeaders,
-          signal: createTimeoutSignal(timeoutMs),
+          signal: rawSignal,
         });
 
         if (fileRes.ok) {
-          text = await fileRes.text();
-        } else {
-          warnings.push(`File "${candidate.path}" could not be inspected (HTTP ${fileRes.status}).`);
-          skipped.push({ path: candidate.path, reason: 'content_fetch_failed' });
-          continue;
+          return await fileRes.text();
         }
-      } catch (err: unknown) {
-        const fetchErr = err instanceof Error ? err.message : 'Network error';
-        warnings.push(`Failed to download "${candidate.path}": ${fetchErr}`);
-        skipped.push({ path: candidate.path, reason: 'content_fetch_failed' });
-        continue;
+        if (fileRes.status >= 400 && fileRes.status < 500) {
+          return null;
+        }
+      } catch {
+        rawUnreachable = true;
       }
     }
 
-    const remainingBudget = totalScanBudgetBytes - totalContentBytesInspected;
-    const excerptLimit = Math.min(3000, remainingBudget);
-    const excerpt = text.slice(0, excerptLimit);
+    // Fast fallback: GitHub REST API blob endpoint
+    try {
+      const apiHeaders: Record<string, string> = {
+        ...baseHeaders,
+        Accept: 'application/vnd.github.v3.raw',
+      };
+      const apiRes = await fetchFn(blobUrl, {
+        headers: apiHeaders,
+        signal: createTimeoutSignal(timeoutMs),
+      });
 
-    totalContentBytesInspected += text.length;
-    fileContentCache.set(candidate.path, text);
+      if (apiRes.ok) {
+        return await apiRes.text();
+      }
+      if (apiRes.status >= 400 && apiRes.status < 500) {
+        return null;
+      }
 
-    inspectedFiles.push({
-      path: candidate.path,
-      category,
-      sizeBytes: candidate.size ?? text.length,
-      contentExcerpt: excerpt,
-      rawUrl,
-      githubUrl,
-    });
-
-        // Scan manifest content for dependencies
-        if (candidate.path.endsWith('package.json')) {
-          try {
-            const pkg = JSON.parse(text);
-            const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
-            if (allDeps.react) detectedTechnologies.add('React');
-            if (allDeps.vite) detectedTechnologies.add('Vite');
-            if (allDeps.next) detectedTechnologies.add('Next.js');
-            if (allDeps.jest) detectedTechnologies.add('Jest');
-            if (allDeps.vitest) detectedTechnologies.add('Vitest');
-            if (allDeps.tailwindcss) detectedTechnologies.add('Tailwind CSS');
-            if (allDeps.pg || allDeps['@prisma/client'] || allDeps.typeorm || allDeps.sqlite3) detectedTechnologies.add('PostgreSQL / SQL');
-          } catch (err: unknown) {
-            const parseErr = err instanceof Error ? err.message : 'Invalid JSON syntax in package.json';
-            parseFailures.push({ path: candidate.path, error: parseErr });
-            warnings.push(`Manifest parse failure in "${candidate.path}": ${parseErr}`);
-          }
-        } else if (candidate.path.endsWith('pyproject.toml') || candidate.path.endsWith('requirements.txt')) {
-          const lowerText = text.toLowerCase();
-          detectedTechnologies.add('Python');
-          if (lowerText.includes('fastapi')) detectedTechnologies.add('FastAPI');
-          if (lowerText.includes('flask')) detectedTechnologies.add('Flask');
-          if (lowerText.includes('django')) detectedTechnologies.add('Django');
-          if (lowerText.includes('pytest')) detectedTechnologies.add('Pytest');
-          if (lowerText.includes('sqlalchemy') || lowerText.includes('sqlite') || lowerText.includes('psycopg')) detectedTechnologies.add('PostgreSQL / SQL');
+      if (apiRes.status === 200) {
+        const json = await apiRes.json();
+        if (json && typeof json.content === 'string' && json.encoding === 'base64') {
+          return atob(json.content.replace(/\s/g, ''));
         }
+      }
+    } catch {
+      // Fallback exhausted
+    }
+
+    return null;
+  };
+
+  const BATCH_SIZE = 5;
+  for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+    if (byteBudgetExceeded || totalContentBytesInspected >= totalScanBudgetBytes) {
+      for (const remaining of candidates.slice(i)) {
+        skipped.push({ path: remaining.path, reason: 'scan_byte_budget_exceeded' });
+      }
+      break;
+    }
+
+    const batch = candidates.slice(i, i + BATCH_SIZE);
+    const batchContents = await Promise.all(batch.map((c) => fetchCandidateContent(c)));
+
+    for (let j = 0; j < batch.length; j++) {
+      const candidate = batch[j];
+      const text = batchContents[j];
+
+      if (byteBudgetExceeded || totalContentBytesInspected >= totalScanBudgetBytes) {
+        byteBudgetExceeded = true;
+        skipped.push({ path: candidate.path, reason: 'scan_byte_budget_exceeded' });
+        continue;
+      }
+
+      if (text === null) {
+        warnings.push(`File "${candidate.path}" could not be inspected.`);
+        skipped.push({ path: candidate.path, reason: 'content_fetch_failed' });
+        continue;
+      }
+
+      const category = categorizeFile(candidate.path);
+      const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${metadata!.defaultBranch}/${candidate.path}`;
+      const githubUrl = `https://github.com/${owner}/${repo}/blob/${metadata!.defaultBranch}/${candidate.path}`;
+
+      const remainingBudget = totalScanBudgetBytes - totalContentBytesInspected;
+      const excerptLimit = Math.min(3000, remainingBudget);
+      const excerpt = text.slice(0, excerptLimit);
+
+      totalContentBytesInspected += text.length;
+      fileContentCache.set(candidate.path, text);
+
+      inspectedFiles.push({
+        path: candidate.path,
+        category,
+        sizeBytes: candidate.size ?? text.length,
+        contentExcerpt: excerpt,
+        rawUrl,
+        githubUrl,
+      });
+
+      // Scan manifest content for dependencies
+      if (candidate.path.endsWith('package.json')) {
+        try {
+          const pkg = JSON.parse(text);
+          const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+          if (allDeps.react) detectedTechnologies.add('React');
+          if (allDeps.vite) detectedTechnologies.add('Vite');
+          if (allDeps.next) detectedTechnologies.add('Next.js');
+          if (allDeps.jest) detectedTechnologies.add('Jest');
+          if (allDeps.vitest) detectedTechnologies.add('Vitest');
+          if (allDeps.tailwindcss) detectedTechnologies.add('Tailwind CSS');
+          if (allDeps.pg || allDeps['@prisma/client'] || allDeps.typeorm || allDeps.sqlite3) detectedTechnologies.add('PostgreSQL / SQL');
+        } catch (err: unknown) {
+          const parseErr = err instanceof Error ? err.message : 'Invalid JSON syntax in package.json';
+          parseFailures.push({ path: candidate.path, error: parseErr });
+          warnings.push(`Manifest parse failure in "${candidate.path}": ${parseErr}`);
+        }
+      } else if (candidate.path.endsWith('pyproject.toml') || candidate.path.endsWith('requirements.txt')) {
+        const lowerText = text.toLowerCase();
+        detectedTechnologies.add('Python');
+        if (lowerText.includes('fastapi')) detectedTechnologies.add('FastAPI');
+        if (lowerText.includes('flask')) detectedTechnologies.add('Flask');
+        if (lowerText.includes('django')) detectedTechnologies.add('Django');
+        if (lowerText.includes('pytest')) detectedTechnologies.add('Pytest');
+        if (lowerText.includes('sqlalchemy') || lowerText.includes('sqlite') || lowerText.includes('psycopg')) detectedTechnologies.add('PostgreSQL / SQL');
+      }
+    }
   }
 
   // 7. Store In-Memory Cache for Immutable Commit SHA

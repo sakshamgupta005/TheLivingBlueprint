@@ -3,6 +3,8 @@ import * as path from 'path';
 import { categorizeFile, isFileIgnored, scoreFileForInspection } from '../../src/domain/github/fileFilter.ts';
 import { mapScanResultToHouse } from '../../src/domain/github/architectureMapper.ts';
 import { deriveProjectStatus } from '../../src/domain/statusEngine.ts';
+import { buildCanvasFromModules } from '../../src/domain/graph/layoutEngine.ts';
+import type { CanvasGraph } from '../../src/domain/graph/types.ts';
 import type { ProjectStatusEvaluation, InfrastructurePillar, DependencyConnection } from '../../src/domain/types.ts';
 import type { ArchitecturalRoom } from '../../src/types.ts';
 import type { GitHubScanResult, InspectedFile, FileCategory } from '../../src/domain/github/types.ts';
@@ -26,6 +28,7 @@ export interface WorkspaceBlueprintData {
   rooms: ArchitecturalRoom[];
   pillars: InfrastructurePillar[];
   dependencies: DependencyConnection[];
+  graph: CanvasGraph;
   discoveredFilePaths: string[];
   inspectedFiles: InspectedFileMeta[];
 }
@@ -184,6 +187,9 @@ export async function scanWorkspace(
   // 6. Deterministically evaluate project status
   const projectEvaluation = deriveProjectStatus(mappedHouse.project);
 
+  // 7. Build interactive architecture canvas graph
+  const graph = buildCanvasFromModules(mappedHouse.rooms, `${workspaceName} Architecture Graph`);
+
   return {
     workspaceName,
     workspacePath: workspaceRoot,
@@ -196,6 +202,7 @@ export async function scanWorkspace(
     rooms: mappedHouse.rooms,
     pillars: mappedHouse.pillars,
     dependencies: mappedHouse.project.dependencies || [],
+    graph,
     discoveredFilePaths: discoveredFiles,
     inspectedFiles: inspectedMeta,
   };
