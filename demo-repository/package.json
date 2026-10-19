@@ -1,0 +1,17 @@
+{
+  "name": "patchboard-tasks-api",
+  "version": "1.0.0",
+  "description": "Minimal task management HTTP API built with native Node.js",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": ["tasks", "api", "node"],
+  "author": "The Living Blueprint Demo",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

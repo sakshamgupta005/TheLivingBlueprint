@@ -1,0 +1,64 @@
+{
+  "name": "Python Backend",
+  "description": "FastAPI Python backend with Pydantic validation schemas, SQLAlchemy DB, and pytest tests.",
+  "entryPoints": [
+    "app/main.py"
+  ],
+  "routes": [
+    "GET /health",
+    "GET /api/items",
+    "POST /api/items"
+  ],
+  "imports": [
+    {
+      "from": "app/main.py",
+      "to": "app/api/endpoints.py"
+    },
+    {
+      "from": "app/api/endpoints.py",
+      "to": "app/models/schemas.py"
+    },
+    {
+      "from": "app/api/endpoints.py",
+      "to": "app/database.py"
+    },
+    {
+      "from": "tests/test_api.py",
+      "to": "app/main.py"
+    }
+  ],
+  "tests": [
+    "tests/test_api.py"
+  ],
+  "workflows": [
+    ".github/workflows/python.yml"
+  ],
+  "expectedRelationships": [
+    {
+      "source": "room-server",
+      "target": "room-validation",
+      "type": "calls"
+    },
+    {
+      "source": "room-server",
+      "target": "room-database",
+      "type": "calls"
+    },
+    {
+      "source": "room-tests",
+      "target": "room-server",
+      "type": "imports"
+    }
+  ],
+  "expectedRooms": [
+    "room-server",
+    "room-validation",
+    "room-database",
+    "room-tests"
+  ],
+  "unsupportedOrUncertainFacts": [
+    "PostgreSQL/SQLite connection pooling capacity under concurrent production load",
+    "Dynamic Python monkey-patching or untyped runtime attributes",
+    "Execution of Alembic migrations cannot be proven statically without running DB"
+  ]
+}

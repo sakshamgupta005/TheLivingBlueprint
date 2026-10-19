@@ -1,0 +1,26 @@
+{
+  "name": "Partially Unsupported Project",
+  "description": "Repository in Fortran 90 with malformed JSON manifest and unsupported native build toolchain.",
+  "entryPoints": [
+    "src/main.f90"
+  ],
+  "routes": [],
+  "imports": [
+    {
+      "from": "src/main.f90",
+      "to": "src/math_module.f90"
+    }
+  ],
+  "tests": [],
+  "workflows": [],
+  "expectedRelationships": [],
+  "expectedRooms": [
+    "room-core"
+  ],
+  "unsupportedOrUncertainFacts": [
+    "Fortran 90 language has no native AST or framework heuristic support",
+    "package.json manifest has invalid JSON syntax and cannot be parsed",
+    "Makefile build steps cannot be safely executed by scanner",
+    "No CI check runs exist for legacy repository"
+  ]
+}

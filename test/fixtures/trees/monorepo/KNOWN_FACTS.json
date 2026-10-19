@@ -1,0 +1,66 @@
+{
+  "name": "TypeScript Monorepo",
+  "description": "Workspaces monorepo containing @saas/api, @saas/web, and @saas/shared packages.",
+  "entryPoints": [
+    "packages/api/src/server.ts",
+    "packages/web/src/App.tsx"
+  ],
+  "routes": [
+    "GET /api/v1/users"
+  ],
+  "imports": [
+    {
+      "from": "packages/api/src/server.ts",
+      "to": "packages/api/src/routes/users.ts"
+    },
+    {
+      "from": "packages/api/src/routes/users.ts",
+      "to": "packages/shared/src/types.ts"
+    },
+    {
+      "from": "packages/web/src/App.tsx",
+      "to": "packages/web/src/components/UserList.tsx"
+    },
+    {
+      "from": "packages/web/src/components/UserList.tsx",
+      "to": "packages/shared/src/types.ts"
+    },
+    {
+      "from": "packages/api/test/users.test.ts",
+      "to": "packages/api/src/server.ts"
+    },
+    {
+      "from": "packages/web/test/App.test.tsx",
+      "to": "packages/web/src/App.tsx"
+    }
+  ],
+  "tests": [
+    "packages/api/test/users.test.ts",
+    "packages/web/test/App.test.tsx"
+  ],
+  "workflows": [
+    ".github/workflows/ci.yml"
+  ],
+  "expectedRelationships": [
+    {
+      "source": "room-tests",
+      "target": "room-server",
+      "type": "imports"
+    },
+    {
+      "source": "room-tests",
+      "target": "room-ui",
+      "type": "imports"
+    }
+  ],
+  "expectedRooms": [
+    "room-server",
+    "room-ui",
+    "room-tests"
+  ],
+  "unsupportedOrUncertainFacts": [
+    "Turborepo build artifact cache hit rates across remote developers",
+    "Circular workspace symlink resolution without running npm/yarn/pnpm install",
+    "Runtime inter-process communication between API and Web frontend"
+  ]
+}

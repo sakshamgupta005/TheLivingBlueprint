@@ -1,0 +1,64 @@
+{
+  "name": "Small JavaScript API",
+  "description": "A small native JavaScript REST API with routing, auth, sqlite db, and test suite.",
+  "entryPoints": [
+    "src/server.js"
+  ],
+  "routes": [
+    "GET /health",
+    "GET /api/tasks",
+    "POST /api/tasks"
+  ],
+  "imports": [
+    {
+      "from": "src/server.js",
+      "to": "src/routes/tasks.js"
+    },
+    {
+      "from": "src/server.js",
+      "to": "src/middleware/auth.js"
+    },
+    {
+      "from": "src/routes/tasks.js",
+      "to": "src/db/database.js"
+    },
+    {
+      "from": "test/tasks.test.js",
+      "to": "src/server.js"
+    }
+  ],
+  "tests": [
+    "test/tasks.test.js"
+  ],
+  "workflows": [
+    ".github/workflows/test.yml"
+  ],
+  "expectedRelationships": [
+    {
+      "source": "room-server",
+      "target": "room-auth",
+      "type": "calls"
+    },
+    {
+      "source": "room-server",
+      "target": "room-database",
+      "type": "calls"
+    },
+    {
+      "source": "room-tests",
+      "target": "room-server",
+      "type": "imports"
+    }
+  ],
+  "expectedRooms": [
+    "room-server",
+    "room-auth",
+    "room-database",
+    "room-tests"
+  ],
+  "unsupportedOrUncertainFacts": [
+    "Live database runtime connectivity cannot be proven without running the database",
+    "Runtime latency distribution cannot be measured by static scan",
+    "Environment variables and secrets are unknown without runtime config"
+  ]
+}

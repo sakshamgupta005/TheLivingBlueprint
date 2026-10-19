@@ -1,0 +1,11 @@
+{
+  "name": "saas-platform-root",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "turbo run test",
+    "build": "turbo run build"
+  }
+}

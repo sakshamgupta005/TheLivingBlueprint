@@ -1,0 +1,18 @@
+{
+  "name": "Documentation & Generated-Heavy Repository",
+  "description": "Repository dominated by markdown RFC documents, generated schemas, and ignored build artifacts.",
+  "entryPoints": [],
+  "routes": [],
+  "imports": [],
+  "tests": [],
+  "workflows": [],
+  "expectedRelationships": [],
+  "expectedRooms": [
+    "room-core"
+  ],
+  "unsupportedOrUncertainFacts": [
+    "No runnable application server or HTTP routes exist in this repository",
+    "No automated test suite is configured or discovered",
+    "Minified artifacts in dist/ and lockfiles are skipped by file filter rules"
+  ]
+}

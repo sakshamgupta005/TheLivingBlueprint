@@ -1,0 +1,5 @@
+{
+  "name": "broken-manifest",
+  "version": "1.0.0",
+  // Syntax error: unquoted trailing property and missing closing brace
+  broken_field: true,

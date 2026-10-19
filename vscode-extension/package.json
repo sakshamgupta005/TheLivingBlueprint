@@ -1,0 +1,73 @@
+{
+  "name": "living-blueprint-vscode",
+  "displayName": "The Living Blueprint",
+  "description": "Discovered architecture, component status, and deterministic evidence for your workspace.",
+  "version": "0.1.0",
+  "publisher": "the-living-blueprint",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Visualization",
+    "Architecture",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "living-blueprint",
+          "title": "Living Blueprint",
+          "icon": "media/blueprint-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "living-blueprint": [
+        {
+          "type": "webview",
+          "id": "livingBlueprint.overviewView",
+          "name": "Living Blueprint",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "livingBlueprint.focus",
+        "title": "Living Blueprint: Focus Blueprint View",
+        "category": "Living Blueprint"
+      },
+      {
+        "command": "livingBlueprint.refresh",
+        "title": "Living Blueprint: Refresh Workspace Architecture",
+        "category": "Living Blueprint",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "livingBlueprint.refresh",
+          "when": "view == livingBlueprint.overviewView",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "node build.js",
+    "watch": "node build.js --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --no-warnings --experimental-strip-types --test test/scanner.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.6.3"
+  }
+}

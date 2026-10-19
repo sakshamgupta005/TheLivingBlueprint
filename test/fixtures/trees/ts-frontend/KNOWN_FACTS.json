@@ -1,0 +1,55 @@
+{
+  "name": "TypeScript Frontend",
+  "description": "React SPA with Vite, TypeScript components, views, and vitest unit tests.",
+  "entryPoints": [
+    "src/main.tsx",
+    "index.html"
+  ],
+  "routes": [
+    "Client-side /overview view rendering"
+  ],
+  "imports": [
+    {
+      "from": "src/main.tsx",
+      "to": "src/App.tsx"
+    },
+    {
+      "from": "src/App.tsx",
+      "to": "src/components/Header.tsx"
+    },
+    {
+      "from": "src/App.tsx",
+      "to": "src/components/Sidebar.tsx"
+    },
+    {
+      "from": "src/App.tsx",
+      "to": "src/views/DashboardView.tsx"
+    },
+    {
+      "from": "test/App.test.tsx",
+      "to": "src/App.tsx"
+    }
+  ],
+  "tests": [
+    "test/App.test.tsx"
+  ],
+  "workflows": [
+    ".github/workflows/ci.yml"
+  ],
+  "expectedRelationships": [
+    {
+      "source": "room-tests",
+      "target": "room-ui",
+      "type": "imports"
+    }
+  ],
+  "expectedRooms": [
+    "room-ui",
+    "room-tests"
+  ],
+  "unsupportedOrUncertainFacts": [
+    "Client-side runtime rendering speed and paint latency",
+    "Real-world bundle size and code-splitting chunks after vite build",
+    "Browser DOM compatibility quirks"
+  ]
+}
