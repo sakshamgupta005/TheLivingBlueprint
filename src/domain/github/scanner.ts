@@ -488,25 +488,36 @@ export async function scanGitHubRepository(
     }
 
     const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${metadata!.defaultBranch}/${candidate.path}`;
+    const cdnUrl = `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${metadata!.defaultBranch}/${candidate.path}`;
     const blobUrl = candidate.url || `https://api.github.com/repos/${owner}/${repo}/git/blobs/${candidate.sha}`;
 
     if (!rawUnreachable) {
       try {
-        const rawSignal = createTimeoutSignal(Math.min(timeoutMs, 2500));
+        const rawSignal = createTimeoutSignal(Math.min(timeoutMs, 1500));
         const fileRes = await fetchFn(rawUrl, {
-          headers: baseHeaders,
           signal: rawSignal,
         });
 
         if (fileRes.ok) {
           return await fileRes.text();
         }
-        if (fileRes.status >= 400 && fileRes.status < 500) {
+        if (fileRes.status === 404) {
           return null;
         }
       } catch {
         rawUnreachable = true;
       }
+    }
+
+    // High-speed CDN mirror fallback for public repos (avoids exhausting 60 req/hr GitHub REST API quota)
+    try {
+      const cdnSignal = createTimeoutSignal(Math.min(timeoutMs, 2500));
+      const cdnRes = await fetchFn(cdnUrl, { signal: cdnSignal });
+      if (cdnRes.ok) {
+        return await cdnRes.text();
+      }
+    } catch {
+      // CDN fallback non-fatal
     }
 
     // Fast fallback: GitHub REST API blob endpoint

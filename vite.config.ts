@@ -20,4 +20,5 @@ export default defineConfig(({ mode }) => {
     },
   };
 });
+// Reload vite config for extension download
 

@@ -63,6 +63,7 @@ const CODE_DEBUGGING_PATTERNS = [
   /\bwhere\s+is\b/i,
   /\bhow\s+does\s+.*work\b/i,
   /\bimplement(?:ed|ation)?\b/i,
+  /\bvalidat(?:e|ion)\b/i,
   /\bauth(?:entication)?\b/i,
   /\bjwt\b/i,
   /\btoken\b/i,

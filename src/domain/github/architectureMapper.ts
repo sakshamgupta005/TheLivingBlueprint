@@ -10,6 +10,7 @@ import type {
 import type { ArchitecturalRoom } from '../../types.ts';
 import type { GitHubScanResult, InspectedFile } from './types.ts';
 import { evaluateCheckRunsForVerification } from '../lifecycle/ciEvaluator.ts';
+import { isFileIgnored, categorizeFile } from './fileFilter.ts';
 
 /**
  * Calculates non-overlapping, harmonious isometric 3D coordinates for N rooms
@@ -153,7 +154,12 @@ export function mapScanResultToHouse(scan: GitHubScanResult): {
   );
 
   // Non-domain directory identifiers that should not be converted into business domain rooms
-  const NON_DOMAIN_FOLDERS = new Set(['src', 'lib', 'app', 'config', 'configs', 'generated', 'gen', 'docs', 'examples', 'dist', 'build', 'core']);
+  const NON_DOMAIN_FOLDERS = new Set([
+    'src', 'lib', 'app', 'config', 'configs', 'generated', 'gen', 'docs', 'documentation',
+    'examples', 'dist', 'build', 'core', 'coverage', 'assets', 'static', 'public',
+    'vendor', 'node_modules', 'temp', 'tmp', 'bin', 'scripts', 'fixtures', 'mocks',
+    'test', 'tests', 'spec', 'specs', '__tests__', '__mocks__'
+  ]);
 
   // Group remaining source files by domain folder (e.g. src/tasks/... -> 'tasks', packages/shared/... -> 'shared')
   const domainFolders = new Map<string, InspectedFile[]>();
@@ -195,6 +201,10 @@ export function mapScanResultToHouse(scan: GitHubScanResult): {
   if (domainFolders.size === 0) {
     for (const p of allPaths) {
       if (classified.has(p)) continue;
+      if (isFileIgnored(p).ignored) continue;
+      const cat = categorizeFile(p);
+      if (cat !== 'source') continue;
+
       const monorepoMatch = p.match(/(?:packages|apps|services|modules)\/([a-zA-Z0-9_-]+)\/src\/([a-zA-Z0-9_-]+)\//i);
       const monorepoPkgMatch = p.match(/(?:packages|apps|services|modules)\/([a-zA-Z0-9_-]+)\//i);
       const domainSubMatch = p.match(/(?:src|lib|app)\/(?:domain|features|modules|services)\/([a-zA-Z0-9_-]+)\//i);

@@ -45,6 +45,28 @@ export function vitePluginAiChat(env?: Record<string, string | undefined>): Plug
         res.end(JSON.stringify({ success: false, error: (err as Error).message }));
       });
     });
+
+    server.middlewares.use((req, res, next) => {
+      const url = req.url?.split('?')[0] || '';
+      if (
+        url === '/api/download/extension' ||
+        url === '/living-blueprint-vscode-0.1.0.vsix' ||
+        url === '/living-blueprint-vscode-latest.vsix' ||
+        url.endsWith('.vsix')
+      ) {
+        import('./extensionDownloadHandler.ts')
+          .then(({ handleExtensionDownloadRequest }) => {
+            return handleExtensionDownloadRequest(req, res);
+          })
+          .catch((err) => {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ success: false, error: (err as Error).message }));
+          });
+        return;
+      }
+      next();
+    });
   };
 
   return {
