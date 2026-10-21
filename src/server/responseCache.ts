@@ -112,96 +112,58 @@ export function buildInvestigationCacheKey(request: InvestigateApiRequest): stri
   return `investigate##${repo.owner}/${repo.repo}@${commitSha}##room:${request.roomId}##status:${roomStatus}##files:${sortedFiles}##v1`;
 }
 
-export function getCachedChatResponse(key: string): ChatCacheEntry | null {
-  const entry = chatCache.get(key);
-  if (!entry) {
-    stats.chatMisses++;
+function getFromCache<T extends { timestamp: number }>(
+  cache: Map<string, T>,
+  key: string,
+  ttl: number,
+  onHit?: () => void,
+  onMiss?: () => void
+): T | null {
+  const entry = cache.get(key);
+  if (!entry || Date.now() - entry.timestamp > ttl) {
+    if (entry) cache.delete(key);
+    onMiss?.();
     return null;
   }
-
-  // Check TTL expiration
-  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
-    chatCache.delete(key);
-    stats.chatMisses++;
-    return null;
-  }
-
-  // Refresh LRU position
-  chatCache.delete(key);
-  chatCache.set(key, entry);
-
-  stats.chatHits++;
+  cache.delete(key);
+  cache.set(key, entry);
+  onHit?.();
   return entry;
+}
+
+function setInCache<T>(cache: Map<string, T>, key: string, entry: T, maxEntries: number, onEvict?: () => void): void {
+  if (cache.size >= maxEntries) {
+    const oldest = cache.keys().next().value;
+    if (oldest) {
+      cache.delete(oldest);
+      onEvict?.();
+    }
+  }
+  cache.set(key, entry);
+}
+
+export function getCachedChatResponse(key: string): ChatCacheEntry | null {
+  return getFromCache(chatCache, key, CACHE_TTL_MS, () => stats.chatHits++, () => stats.chatMisses++);
 }
 
 export function setCachedChatResponse(
   key: string,
   entry: Omit<ChatCacheEntry, 'timestamp'>
 ): void {
-  // Validate that we only cache successful responses with actual replies
-  if (!entry.response || !Array.isArray(entry.response.replies) || entry.response.replies.length === 0) {
-    return;
-  }
-
-  if (chatCache.size >= MAX_CACHE_ENTRIES) {
-    const oldest = chatCache.keys().next().value;
-    if (oldest) {
-      chatCache.delete(oldest);
-      stats.evictions++;
-    }
-  }
-
-  chatCache.set(key, {
-    ...entry,
-    timestamp: Date.now(),
-  });
+  if (!entry.response?.replies?.length) return;
+  setInCache(chatCache, key, { ...entry, timestamp: Date.now() }, MAX_CACHE_ENTRIES, () => stats.evictions++);
 }
 
 export function getCachedInvestigation(key: string): InvestigationCacheEntry | null {
-  const entry = investigationCache.get(key);
-  if (!entry) {
-    stats.investigationMisses++;
-    return null;
-  }
-
-  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
-    investigationCache.delete(key);
-    stats.investigationMisses++;
-    return null;
-  }
-
-  // Refresh LRU position
-  investigationCache.delete(key);
-  investigationCache.set(key, entry);
-
-  stats.investigationHits++;
-  return entry;
+  return getFromCache(investigationCache, key, CACHE_TTL_MS, () => stats.investigationHits++, () => stats.investigationMisses++);
 }
 
 export function setCachedInvestigation(
   key: string,
   entry: Omit<InvestigationCacheEntry, 'timestamp'>
 ): void {
-  // Only cache fully validated findings with zero rejected references
-  if (
-    !entry.finding ||
-    (entry.finding.rejectedReferences && entry.finding.rejectedReferences.length > 0)
-  ) {
-    return;
-  }
-
-  if (investigationCache.size >= MAX_CACHE_ENTRIES) {
-    const oldest = investigationCache.keys().next().value;
-    if (oldest) {
-      investigationCache.delete(oldest);
-      stats.evictions++;
-    }
-  }
-
-  investigationCache.set(key, {
-    ...entry,
-    timestamp: Date.now(),
-  });
+  if (!entry.finding || (entry.finding.rejectedReferences && entry.finding.rejectedReferences.length > 0)) return;
+  setInCache(investigationCache, key, { ...entry, timestamp: Date.now() }, MAX_CACHE_ENTRIES, () => stats.evictions++);
 }
 
 export function clearResponseCache(): void {
@@ -227,24 +189,14 @@ export function invalidateResponseCache(criteria?: {
 
   const { owner, repo, commitSha, roomId } = criteria;
   const targetRepo = owner && repo ? `${owner}/${repo}` : undefined;
+  const matches = (k: string) =>
+    (commitSha && k.includes(`@${commitSha}`)) ||
+    (targetRepo && k.includes(targetRepo)) ||
+    (roomId && k.includes(`room:${roomId}`));
 
-  for (const key of Array.from(chatCache.keys())) {
-    if (commitSha && key.includes(`@${commitSha}`)) {
-      chatCache.delete(key);
-    } else if (targetRepo && key.includes(targetRepo)) {
-      chatCache.delete(key);
-    } else if (roomId && key.includes(`room:${roomId}`)) {
-      chatCache.delete(key);
-    }
-  }
-
-  for (const key of Array.from(investigationCache.keys())) {
-    if (commitSha && key.includes(`@${commitSha}`)) {
-      investigationCache.delete(key);
-    } else if (targetRepo && key.includes(targetRepo)) {
-      investigationCache.delete(key);
-    } else if (roomId && key.includes(`room:${roomId}`)) {
-      investigationCache.delete(key);
+  for (const map of [chatCache, investigationCache]) {
+    for (const key of Array.from(map.keys())) {
+      if (matches(key)) map.delete(key);
     }
   }
 }
@@ -270,22 +222,12 @@ const EXPLANATION_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const roomExplanationCache = new Map<string, RoomExplanationCacheEntry>();
 
 export function getCachedRoomExplanation(key: string): { text: string; diagram?: any } | null {
-  const entry = roomExplanationCache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > EXPLANATION_CACHE_TTL_MS) {
-    roomExplanationCache.delete(key);
-    return null;
-  }
-  return entry;
+  return getFromCache(roomExplanationCache, key, EXPLANATION_CACHE_TTL_MS);
 }
 
 export function setCachedRoomExplanation(key: string, value: { text: string; diagram?: any }): void {
-  if (!value.text || value.text.trim().length === 0) return;
-  if (roomExplanationCache.size >= MAX_EXPLANATION_CACHE_ENTRIES) {
-    const oldest = roomExplanationCache.keys().next().value;
-    if (oldest) roomExplanationCache.delete(oldest);
-  }
-  roomExplanationCache.set(key, { ...value, timestamp: Date.now() });
+  if (!value.text?.trim()) return;
+  setInCache(roomExplanationCache, key, { ...value, timestamp: Date.now() }, MAX_EXPLANATION_CACHE_ENTRIES);
 }
 
 export function clearRoomExplanationCache(): void {

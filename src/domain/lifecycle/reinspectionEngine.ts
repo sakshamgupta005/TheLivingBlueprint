@@ -202,25 +202,17 @@ export async function reinspectForFix(
   const newEvidenceRecords: EvidenceRecord[] = [];
 
   // (a) User report evidence (Provenance: user_confirmation only)
-  if (report.testOutput && report.testOutput.trim().length > 0) {
-    newEvidenceRecords.push({
-      id: `ev-fix-user-${commitInfo.sha.slice(0, 7)}-${Date.now()}`,
-      sourceType: 'user_confirmation',
-      description: `User-reported test output for fix: "${report.summary}". Note: Unverified claim from coding agent; not independently corroborated by CI.`,
-      timestamp,
-      reference: commitInfo.htmlUrl,
-      targetRequirementId,
-    });
-  } else {
-    newEvidenceRecords.push({
-      id: `ev-fix-report-${commitInfo.sha.slice(0, 7)}-${Date.now()}`,
-      sourceType: 'user_confirmation',
-      description: `User reported fix: "${report.summary}"`,
-      timestamp,
-      reference: commitInfo.htmlUrl,
-      targetRequirementId,
-    });
-  }
+  const hasTestOutput = Boolean(report.testOutput && report.testOutput.trim().length > 0);
+  newEvidenceRecords.push({
+    id: `ev-fix-${hasTestOutput ? 'user' : 'report'}-${commitInfo.sha.slice(0, 7)}-${Date.now()}`,
+    sourceType: 'user_confirmation',
+    description: hasTestOutput
+      ? `User-reported test output for fix: "${report.summary}". Note: Unverified claim from coding agent; not independently corroborated by CI.`
+      : `User reported fix: "${report.summary}"`,
+    timestamp,
+    reference: commitInfo.htmlUrl,
+    targetRequirementId,
+  });
 
   // (b) Inspected changed code (Provenance: source_code)
   if (inspectedChangedFiles.length > 0) {
@@ -265,46 +257,29 @@ export async function reinspectForFix(
   const resultingStatusEvaluation = deriveRoomStatus(updatedRoom);
 
   // 9. Generate Dog & Cat Companion Dialogue
-  const companionMessages: Array<{ speaker: 'dog' | 'cat'; text: string }> = [];
-
   const shortSha = commitInfo.sha.slice(0, 7);
-  if (ciEvaluation.outcome === 'verified') {
-    companionMessages.push({
-      speaker: 'dog',
-      text: `Awesome job! Commit ${shortSha} modified ${inspectedChangedFiles.length} file(s) and passed all relevant CI checks!`,
-    });
-    companionMessages.push({
-      speaker: 'cat',
-      text: `The test suite passed in CI. I've verified the evidence myself—the room is now officially verified.`,
-    });
-  } else if (ciEvaluation.outcome === 'failed') {
-    companionMessages.push({
-      speaker: 'dog',
-      text: `I inspected commit ${shortSha} with the reported fix, but the automated test check failed in CI!`,
-    });
-    companionMessages.push({
-      speaker: 'cat',
-      text: `Look at the CI failure log. Don't claim a fix works until the actual tests turn green.`,
-    });
-  } else if (ciEvaluation.outcome === 'implemented_only') {
-    companionMessages.push({
-      speaker: 'dog',
-      text: `Commit ${shortSha} has real code changes, but no automated test checks ran for this commit.`,
-    });
-    companionMessages.push({
-      speaker: 'cat',
-      text: `Passing a linter or preview is not a test suite. I see code changes, so status is implemented, not verified.`,
-    });
-  } else {
-    companionMessages.push({
-      speaker: 'dog',
-      text: `Inspected commit ${shortSha} with your reported fix summary!`,
-    });
-    companionMessages.push({
-      speaker: 'cat',
-      text: `No CI test results are accessible here. Your pasted test claims stay unverified until a real runner confirms them.`,
-    });
-  }
+  const dialogueByOutcome: Record<string, [string, string]> = {
+    verified: [
+      `Awesome job! Commit ${shortSha} modified ${inspectedChangedFiles.length} file(s) and passed all relevant CI checks!`,
+      `The test suite passed in CI. I've verified the evidence myself—the room is now officially verified.`,
+    ],
+    failed: [
+      `I inspected commit ${shortSha} with the reported fix, but the automated test check failed in CI!`,
+      `Look at the CI failure log. Don't claim a fix works until the actual tests turn green.`,
+    ],
+    implemented_only: [
+      `Commit ${shortSha} has real code changes, but no automated test checks ran for this commit.`,
+      `Passing a linter or preview is not a test suite. I see code changes, so status is implemented, not verified.`,
+    ],
+  };
+  const [dogMsg, catMsg] = dialogueByOutcome[ciEvaluation.outcome] || [
+    `Inspected commit ${shortSha} with your reported fix summary!`,
+    `No CI test results are accessible here. Your pasted test claims stay unverified until a real runner confirms them.`,
+  ];
+  const companionMessages: Array<{ speaker: 'dog' | 'cat'; text: string }> = [
+    { speaker: 'dog', text: dogMsg },
+    { speaker: 'cat', text: catMsg },
+  ];
 
   return {
     report,

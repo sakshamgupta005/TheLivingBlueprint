@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test test/statusEngine.test.ts test/githubScanner.test.ts test/aiCompanion.test.ts test/investigation.test.ts test/fixReporting.test.ts test/apiRoutes.test.ts test/ciScanEvidence.test.ts test/architectureInteraction.test.ts test/fileIdentityGrounding.test.ts test/sourceGroundingValidation.test.ts test/workspacePersistence.test.ts test/failureRecovery.test.ts test/demoWalkthrough.test.ts test/aiLatencyOptimization.test.ts test/educationalWorkflow.test.ts test/readableInvestigation.test.ts test/t18EducationalCompanions.test.ts test/roomInternalsVisualization.test.ts test/roomInternalsSimulation.test.ts test/aiRateLimitRecovery.test.ts test/aiProviderFallback.test.ts test/scannerTruthAudit.test.ts test/githubScannerAdvanced.test.ts test/codeIndex.test.ts test/interactiveGraphCanvas.test.ts test/controlFlowGraph.test.ts test/dataFlowAnalysis.test.ts test/requestJourney.test.ts test/staticSimulation.test.ts test/evidenceChain.test.ts test/architectureViews.test.ts test/companionEvaluation.test.ts test/investigationWorkspaceFindings.test.ts test/t35CrossRepoAcceptance.test.ts"
+    "test": "node --experimental-strip-types --test \"test/*.test.ts\""
   },
   "dependencies": {
     "@types/d3": "^7.4.3",

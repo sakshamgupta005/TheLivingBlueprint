@@ -133,23 +133,16 @@ export function invalidateContextCache(criteria?: {
 
   const { owner, repo, commitSha, selectedRoomId } = criteria;
 
-  for (const key of Array.from(sourceContextCache.keys())) {
-    if (commitSha && key.includes(commitSha)) {
-      sourceContextCache.delete(key);
-    } else if (owner && repo && key.includes(`${owner}/${repo}`)) {
-      sourceContextCache.delete(key);
-    } else if (selectedRoomId && key.includes(selectedRoomId)) {
-      sourceContextCache.delete(key);
-    }
-  }
+  const matches = (k: string) =>
+    Boolean(
+      (commitSha && k.includes(commitSha)) ||
+      (owner && repo && k.includes(`${owner}/${repo}`)) ||
+      (selectedRoomId && k.includes(selectedRoomId))
+    );
 
-  for (const key of Array.from(systemPromptCache.keys())) {
-    if (commitSha && key.includes(commitSha)) {
-      systemPromptCache.delete(key);
-    } else if (owner && repo && key.includes(`${owner}/${repo}`)) {
-      systemPromptCache.delete(key);
-    } else if (selectedRoomId && key.includes(selectedRoomId)) {
-      systemPromptCache.delete(key);
+  for (const cache of [sourceContextCache, systemPromptCache]) {
+    for (const key of Array.from(cache.keys())) {
+      if (matches(key)) cache.delete(key);
     }
   }
 }
@@ -321,7 +314,7 @@ ${content}${isTruncated ? '\n[... remainder of file truncated for context budget
 
   const uninspectedSection =
     uninspected.length > 0
-      ? `\nDISCOVERED UNINSPECTED FILES IN GIT TREE (Content was not fetched in bounded scan):\n${uninspected
+      ? `\nDISCOVERED FILE PATHS (Tree Only - File contents were NOT inspected):\nDISCOVERED UNINSPECTED FILES IN GIT TREE (Content was not fetched in bounded scan):\n${uninspected
           .map((p) => `- ${p} (uninspected)`)
           .join('\n')}`
       : '';
@@ -553,7 +546,7 @@ export function buildSystemPrompt(request: ChatApiRequest): string {
         const formattedFindings = findingsList.map((f) => {
           const isSelectedRoom = request.selectedRoomId && f.roomId === request.selectedRoomId;
           const codeEv = f.codeEvidence
-            ? `Validated Code Excerpt: ${f.codeEvidence.filePath || f.roomId}:${f.codeEvidence.lineStart || ''}\n\`\`\`\n${f.codeEvidence.snippet || f.codeEvidence.code || ''}\n\`\`\``
+            ? `Validated Code Excerpt: ${f.codeEvidence.filePath || f.roomId}:${f.codeEvidence.lineStart || ''}\n\`\`\`\n${f.codeEvidence.snippet || f.codeEvidence.code || f.codeEvidence.codeSnippet || ''}\n\`\`\``
             : 'No direct code snippet';
           const refs = Array.isArray(f.evidenceReferences)
             ? f.evidenceReferences.map((r: any) => typeof r === 'string' ? r : `${r.type}: ${r.target || r.filePath || ''}`).join(', ')
@@ -561,7 +554,7 @@ export function buildSystemPrompt(request: ChatApiRequest): string {
           return `[INVESTIGATION FINDING${isSelectedRoom ? ' (CURRENT ROOM FOCUS)' : ''}]
 Room: ${f.roomName || f.roomId} (id: ${f.roomId})
 Issue Title: ${f.title}
-Category: ${f.category || 'logic'} | Severity: ${f.severity || 'medium'}
+Category: ${f.category || 'logic'} | Severity: ${String(f.severity || 'medium').toUpperCase()}
 Evidence Classification: ${f.evidenceClassification || 'inferred'}
 Explanation: ${f.explanation}
 Why It Matters: ${f.whyItMatters || 'N/A'}
@@ -571,7 +564,7 @@ Related Evidence References: ${refs}
 ${codeEv}`;
         }).join('\n\n');
 
-        investigationSection = `\nINVESTIGATION FINDINGS & ROOT CAUSE EVIDENCE (from Room Inspector investigations):
+        investigationSection = `\nPREVIOUS ROOM INVESTIGATION FINDINGS & ROOT CAUSE EVIDENCE (from Room Inspector investigations):
 [UNTRUSTED INVESTIGATION EVIDENCE - AI ANALYSIS ONLY, NOT DETERMINISTIC GROUND TRUTH]
 ${formattedFindings}
 [END INVESTIGATION EVIDENCE]
@@ -616,6 +609,7 @@ IMPORTANT INVESTIGATION RULES:
       : 'VERIFIED CI STATUS: Inconclusive / no checks available';
 
     repoSection = `ACTIVE REPOSITORY: ${repo.owner}/${repo.repo} (branch: ${repo.branch})
+TARGET REPOSITORY: ${repo.owner}/${repo.repo}
 ${commitInfo}
 ${ciInfo}
 TOTAL DISCOVERED FILES IN GIT TREE: ${repo.totalFiles}
@@ -630,8 +624,9 @@ ${sourceContext.formattedPromptSection}
 `;
   }
 
+  const selectedRoom = repo?.roomSummaries?.find((r) => r.id === request.selectedRoomId);
   const selectedRoomNotice = request.selectedRoomId
-    ? `CURRENT USER FOCUS: The user has currently clicked and selected room ID: "${request.selectedRoomId}". Prioritize code details, tests, and evidence about this subsystem.`
+    ? `CURRENT USER FOCUS: The user has currently clicked and selected room ID: "${request.selectedRoomId}". CURRENT SELECTED ROOM: ${selectedRoom ? `${selectedRoom.name} (id: ${selectedRoom.id})` : `(id: ${request.selectedRoomId})`}. Prioritize code details, tests, and evidence about this subsystem.`
     : '';
 
   const explanationLevel = request.explanationLevel || 'beginner';
@@ -845,7 +840,7 @@ GROUNDING & STRICT TRUTH POLICY:
   - For example, if asked about whitespace validation, inspect the actual function (e.g. validateTaskTitle(title) in src/tasks/validation.js) and its exact check (title.length === 0 checks raw string length without trimming).
   - Distinguish the implemented code from tests: note what test/createTask.test.js expects versus what the source code does.
   - Distinguish code inspection from test execution: YOU did not execute the tests; cite the GitHub CI check-run failure as evidence that the test failed.
-- NEVER invent nonexistent functions or variables (such as validateTaskInput or input.title). Use only verified identifiers from the inspected files.
+- NEVER invent nonexistent functions or variables (such as validateTaskInput or input.title). Use only verified identifiers from the inspected files. Never invent imports, functions, or implementation details.
 - NEVER claim tests ran or verified functionality unless actual CI verification evidence exists in the status records.
 - If files were not inspected in the scan, explicitly admit that coverage is limited to the inspected files.
 - You CANNOT change room statuses. Room statuses are governed strictly by the deterministic evidence engine.
