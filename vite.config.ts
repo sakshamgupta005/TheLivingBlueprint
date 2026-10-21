@@ -12,6 +12,17 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       open: false,
     },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'vendor-react': ['react', 'react-dom'],
+            'vendor-flow': ['reactflow'],
+            'vendor-d3': ['d3'],
+          },
+        },
+      },
+    },
   };
 });
 // Reload vite config for companion chat updates

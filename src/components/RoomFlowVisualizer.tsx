@@ -13,7 +13,7 @@ import ReactFlow, {
   BackgroundVariant,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import * as d3 from 'd3';
+import { select, max, scaleLinear, scaleBand, axisBottom, line, curveMonotoneY } from 'd3';
 import type { WorkflowDiagram, WorkflowNode, WorkflowEdge } from '../server/types.ts';
 
 // ---------------------------------------------------------------------------
@@ -217,10 +217,9 @@ const D3PipelineChart: React.FC<D3PipelineChartProps> = ({
     const margin = { top: 32, right: 90, bottom: 30, left: 190 };
     const height = Math.max(240, nodes.length * barHeight + margin.top + margin.bottom);
 
-    d3.select(container).selectAll('*').remove();
+    select(container).selectAll('*').remove();
 
-    const svg = d3
-      .select(container)
+    const svg = select(container)
       .append('svg')
       .attr('width', width)
       .attr('height', height)
@@ -247,14 +246,12 @@ const D3PipelineChart: React.FC<D3PipelineChartProps> = ({
     normalGrad.append('stop').attr('offset', '0%').attr('stop-color', '#3d2c22');
     normalGrad.append('stop').attr('offset', '100%').attr('stop-color', '#5c4333');
 
-    const maxDuration = d3.max(stageMetrics, (d) => d.durationMs) || 100;
-    const xScale = d3
-      .scaleLinear()
+    const maxDuration = max(stageMetrics, (d) => d.durationMs) || 100;
+    const xScale = scaleLinear()
       .domain([0, maxDuration * 1.25])
       .range([margin.left, width - margin.right]);
 
-    const yScale = d3
-      .scaleBand<number>()
+    const yScale = scaleBand<number>()
       .domain(nodes.map((_, i) => i))
       .range([margin.top, height - margin.bottom])
       .padding(0.28);
@@ -265,8 +262,7 @@ const D3PipelineChart: React.FC<D3PipelineChartProps> = ({
       .attr('class', 'd3-grid')
       .attr('transform', `translate(0, ${height - margin.bottom})`)
       .call(
-        d3
-          .axisBottom(xScale)
+        axisBottom(xScale)
           .ticks(5)
           .tickSize(-(height - margin.top - margin.bottom))
           .tickFormat((d) => `${d}ms`)
@@ -281,7 +277,7 @@ const D3PipelineChart: React.FC<D3PipelineChartProps> = ({
       return [xScale(d.durationMs / 2), y];
     });
 
-    const lineGenerator = d3.line().curve(d3.curveMonotoneY);
+    const lineGenerator = line().curve(curveMonotoneY);
     svg
       .append('path')
       .datum(curvePoints)
