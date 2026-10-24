@@ -6,9 +6,7 @@ import {
   validateInboundMessage,
   getRejectedMessagesCount,
   resetRejectedMessagesCount,
-  ALLOWED_COMMANDS,
   handleFolderSelection,
-  type ValidInboundMessage,
 } from '../src/protocol.ts';
 import {
   resolveWorkspaceFile,

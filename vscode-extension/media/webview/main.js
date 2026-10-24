@@ -107,16 +107,10 @@
     latestReinspectionByRoomId = {};
     isReinspectingFinding = false;
     activeReinspectingRoomId = null;
-    if (activeReinspectionWatchdog) {
-      clearTimeout(activeReinspectionWatchdog);
-      activeReinspectionWatchdog = null;
-    }
+    activeReinspectionWatchdog = clearTimer(activeReinspectionWatchdog);
     isInvestigatingRoom = false;
     activeInvestigatingRoomId = null;
-    if (activeInvestigationWatchdog) {
-      clearTimeout(activeInvestigationWatchdog);
-      activeInvestigationWatchdog = null;
-    }
+    activeInvestigationWatchdog = clearTimer(activeInvestigationWatchdog);
     isTestRunning = false;
     lastTestRunResult = null;
     if (testRunIndicatorBadge) {
@@ -251,10 +245,7 @@
   }
 
   function stopWatchdogTimer() {
-    if (sendWatchdogTimeout) {
-      clearTimeout(sendWatchdogTimeout);
-      sendWatchdogTimeout = null;
-    }
+    sendWatchdogTimeout = clearTimer(sendWatchdogTimeout);
   }
 
   function showThinkingBubble(speakerName) {
@@ -399,21 +390,13 @@
         btnClearChat.textContent = 'Clear';
       }
     }
-    // Do NOT clear messages locally; wait for host to confirm via conversationCleared or conversationHistory.
+    // Do NOT clear messages locally; wait for the host to confirm via conversationHistory.
   }
 
-  function handleHostConversationCleared() {
-    if (btnClearChat) {
-      btnClearChat.disabled = false;
-      btnClearChat.textContent = 'Clear';
-    }
-    stopWatchdogTimer();
-    updateSendingState(false);
-    hideThinkingBubble();
-    renderEmptyChatState();
-    if (latestAnalysisQuestions && latestAnalysisQuestions.length > 0) {
-      renderSuggestionsRow(latestAnalysisQuestions);
-    }
+  /** Clears a pending timer and returns null, for `timer = clearTimer(timer)`. */
+  function clearTimer(timer) {
+    if (timer) clearTimeout(timer);
+    return null;
   }
 
   function handleHostConversationHistory(turns) {
@@ -2075,10 +2058,7 @@
 
   function triggerRoomInvestigation(roomId, bypassCache = false) {
     if (isInvestigatingRoom || !roomId) return;
-    if (activeInvestigationWatchdog) {
-      clearTimeout(activeInvestigationWatchdog);
-      activeInvestigationWatchdog = null;
-    }
+    activeInvestigationWatchdog = clearTimer(activeInvestigationWatchdog);
     setInvestigatingState(true, roomId);
     vscode.postMessage({
       command: 'investigateRoom',
@@ -2108,10 +2088,7 @@
     const record = storedFindingsByRoomId[roomId];
     if (!record) return;
 
-    if (activeReinspectionWatchdog) {
-      clearTimeout(activeReinspectionWatchdog);
-      activeReinspectionWatchdog = null;
-    }
+    activeReinspectionWatchdog = clearTimer(activeReinspectionWatchdog);
 
     setReinspectingState(true, roomId);
 
@@ -2219,10 +2196,7 @@
       return;
     }
 
-    if (activeHandoffWatchdog) {
-      clearTimeout(activeHandoffWatchdog);
-      activeHandoffWatchdog = null;
-    }
+    activeHandoffWatchdog = clearTimer(activeHandoffWatchdog);
 
     activeHandoffAction = action;
     activeHandoffRoomId = roomId;
@@ -2260,10 +2234,7 @@
   }
 
   function handleHandoffResult(msg) {
-    if (activeHandoffWatchdog) {
-      clearTimeout(activeHandoffWatchdog);
-      activeHandoffWatchdog = null;
-    }
+    activeHandoffWatchdog = clearTimer(activeHandoffWatchdog);
     const action = msg.action || activeHandoffAction || (msg.adapterId === 'file' ? 'save' : 'copy');
     setHandoffButtonsState(false);
 
@@ -2306,10 +2277,7 @@
   }
 
   function handleReinspectionResult(msg) {
-    if (activeReinspectionWatchdog) {
-      clearTimeout(activeReinspectionWatchdog);
-      activeReinspectionWatchdog = null;
-    }
+    activeReinspectionWatchdog = clearTimer(activeReinspectionWatchdog);
     if (!msg.roomId || msg.roomId === activeReinspectingRoomId) {
       setReinspectingState(false);
     }
@@ -2328,36 +2296,8 @@
     }
   }
 
-  function handleReinspectionUnavailable(msg) {
-    if (activeReinspectionWatchdog) {
-      clearTimeout(activeReinspectionWatchdog);
-      activeReinspectionWatchdog = null;
-    }
-    if (!msg.roomId || msg.roomId === activeReinspectingRoomId) {
-      setReinspectingState(false);
-    }
-    if (msg.roomId) {
-      latestReinspectionByRoomId[msg.roomId] = {
-        roomId: msg.roomId,
-        classification: 'not_comparable',
-        message: msg.reason || msg.message || 'Re-inspection is unavailable for this finding.',
-        evidence: [],
-        testsPassedForCurrentSnapshot: false,
-        fixVerified: false,
-        findingStale: false,
-        at: new Date().toISOString(),
-      };
-    }
-    if (msg.roomId === currentSelectedRoomId) {
-      updateInvestigationUi();
-    }
-  }
-
   function handleReinspectionError(msg) {
-    if (activeReinspectionWatchdog) {
-      clearTimeout(activeReinspectionWatchdog);
-      activeReinspectionWatchdog = null;
-    }
+    activeReinspectionWatchdog = clearTimer(activeReinspectionWatchdog);
     if (!msg.roomId || msg.roomId === activeReinspectingRoomId) {
       setReinspectingState(false);
     }
@@ -3367,7 +3307,7 @@
       }
       case 'securityState': {
         const modeBadge = document.getElementById('modeBadge');
-        const isUntrusted = Boolean(msg.untrusted || msg.isTrusted === false);
+        const isUntrusted = msg.isTrusted === false;
         isWorkspaceUntrusted = isUntrusted;
         updateTestRunButtonUi();
         const consentCheckbox = document.getElementById('consentCheckbox');
@@ -3495,8 +3435,7 @@
         break;
       }
       case 'companionReplies': {
-        const msgs = msg.messages || msg.replies || (msg.message ? [msg.message] : []);
-        appendCompanionReplies(msgs, {
+        appendCompanionReplies(msg.messages || [], {
           suggestedFollowUps: msg.suggestedFollowUps,
           suggestedQuestions: msg.suggestedQuestions,
           errorInfo: msg.errorInfo,
@@ -3504,20 +3443,7 @@
         });
         break;
       }
-      case 'companionTurn':
-      case 'chatTurn': {
-        const turn = msg.turn || msg;
-        const msgs = turn.replies || turn.messages || [];
-        appendCompanionReplies(msgs, {
-          suggestedFollowUps: turn.suggestedFollowUps,
-          suggestedQuestions: turn.suggestedQuestions,
-          errorInfo: turn.errorInfo,
-          error: turn.error,
-        });
-        break;
-      }
-      case 'companionError':
-      case 'chatError': {
+      case 'companionError': {
         stopWatchdogTimer();
         updateSendingState(false);
         hideThinkingBubble();
@@ -3532,10 +3458,6 @@
           }
           updateChatContextIndicator();
         }
-        break;
-      }
-      case 'conversationCleared': {
-        handleHostConversationCleared();
         break;
       }
       case 'conversationHistory': {
@@ -3594,30 +3516,12 @@
         handleInvestigationError(msg);
         break;
       }
-      case 'handoffResult':
-      case 'repairPromptHandoffResult':
-      case 'handoffRepairPromptResult': {
+      case 'handoffResult': {
         handleHandoffResult(msg);
         break;
       }
       case 'reinspectionResult': {
         handleReinspectionResult(msg);
-        break;
-      }
-      case 'reinspectionState': {
-        if (msg.status === 'loading') {
-          setReinspectingState(true, msg.roomId);
-        } else if (!msg.roomId || msg.roomId === activeReinspectingRoomId) {
-          setReinspectingState(false);
-        }
-        break;
-      }
-      case 'reinspectionUnavailable': {
-        handleReinspectionUnavailable(msg);
-        break;
-      }
-      case 'reinspectionError': {
-        handleReinspectionError(msg);
         break;
       }
       case 'architectureLens': {
@@ -3668,10 +3572,7 @@
             lastSubmittedQuestion
           );
         } else if (cmd === 'investigateRoom') {
-          if (activeInvestigationWatchdog) {
-            clearTimeout(activeInvestigationWatchdog);
-            activeInvestigationWatchdog = null;
-          }
+          activeInvestigationWatchdog = clearTimer(activeInvestigationWatchdog);
           setInvestigatingState(false);
           handleInvestigationError({
             roomId: msg.roomId || activeInvestigatingRoomId || currentSelectedRoomId,
@@ -3683,20 +3584,14 @@
             },
           });
         } else if (cmd === 'reinspectFinding') {
-          if (activeReinspectionWatchdog) {
-            clearTimeout(activeReinspectionWatchdog);
-            activeReinspectionWatchdog = null;
-          }
+          activeReinspectionWatchdog = clearTimer(activeReinspectionWatchdog);
           setReinspectingState(false);
           handleReinspectionError({
             roomId: msg.roomId || activeReinspectingRoomId || currentSelectedRoomId,
             error: reason,
           });
         } else if (cmd === 'handoffRepairPrompt') {
-          if (activeHandoffWatchdog) {
-            clearTimeout(activeHandoffWatchdog);
-            activeHandoffWatchdog = null;
-          }
+          activeHandoffWatchdog = clearTimer(activeHandoffWatchdog);
           setHandoffButtonsState(false);
           showHandoffFeedback('⚠️ Host handoff rejected: ' + reason, 'error');
         } else if (cmd === 'requestEvidenceChain') {
@@ -3729,20 +3624,11 @@
           stopWatchdogTimer();
           updateSendingState(false);
           hideThinkingBubble();
-          if (activeInvestigationWatchdog) {
-            clearTimeout(activeInvestigationWatchdog);
-            activeInvestigationWatchdog = null;
-          }
+          activeInvestigationWatchdog = clearTimer(activeInvestigationWatchdog);
           setInvestigatingState(false);
-          if (activeReinspectionWatchdog) {
-            clearTimeout(activeReinspectionWatchdog);
-            activeReinspectionWatchdog = null;
-          }
+          activeReinspectionWatchdog = clearTimer(activeReinspectionWatchdog);
           setReinspectingState(false);
-          if (activeHandoffWatchdog) {
-            clearTimeout(activeHandoffWatchdog);
-            activeHandoffWatchdog = null;
-          }
+          activeHandoffWatchdog = clearTimer(activeHandoffWatchdog);
           setHandoffButtonsState(false);
           isTestRunning = false;
           updateTestRunButtonUi();
@@ -3803,10 +3689,7 @@
   let payloadPreviewTimeout = null;
 
   function requestHostPayloadPreview() {
-    if (payloadPreviewTimeout) {
-      clearTimeout(payloadPreviewTimeout);
-      payloadPreviewTimeout = null;
-    }
+    payloadPreviewTimeout = clearTimer(payloadPreviewTimeout);
 
     const loadingState = document.getElementById('payloadLoadingState');
     const errorState = document.getElementById('payloadErrorState');
@@ -3836,10 +3719,7 @@
   }
 
   function handleHostPayloadResponse(msg) {
-    if (payloadPreviewTimeout) {
-      clearTimeout(payloadPreviewTimeout);
-      payloadPreviewTimeout = null;
-    }
+    payloadPreviewTimeout = clearTimer(payloadPreviewTimeout);
 
     const loadingState = document.getElementById('payloadLoadingState');
     const errorState = document.getElementById('payloadErrorState');

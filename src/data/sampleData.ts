@@ -1,4 +1,4 @@
-import type { ArchitecturalRoom, ChatMessagePreview } from '../types.ts';
+import type { ArchitecturalRoom } from '../types.ts';
 
 /**
  * Fallback demonstration dataset: BookNook bookstore application.
@@ -53,24 +53,5 @@ export const SAMPLE_ROOMS: ArchitecturalRoom[] = [
     evidence: 'Sample: Architecture specification present in docs, but 0 implementation files exist.',
     metrics: { testsPassed: 0, totalTests: 0, filesCount: 0 },
     coords: { isoX: 10, isoY: -130, width: 160, height: 80, depth: 120 },
-  },
-];
-
-export const PREVIEW_CHAT_MESSAGES: ChatMessagePreview[] = [
-  {
-    id: 'msg-1',
-    sender: 'dog',
-    speakerName: 'Barkley',
-    tagline: 'Friendly · Energetic · Helpful',
-    content: "Hi there! I'm Barkley! I've laid out the foundation pillars and the BookNook catalog rooms. We've got 42 tests passing across Auth and Catalog! Ready whenever you want to dig into the next piece!",
-    timestamp: 'Preview · Offline',
-  },
-  {
-    id: 'msg-2',
-    sender: 'cat',
-    speakerName: 'Cleo',
-    tagline: 'Sassy · Observant · Skeptical',
-    content: "Hold your excitement, dog. Look at the Cart & Checkout room: 5 tests are red, Stripe webhooks are unhandled, and your 'AI Recommendations' is just an empty markdown file. Code isn't complete until the evidence backs it.",
-    timestamp: 'Preview · Offline',
   },
 ];

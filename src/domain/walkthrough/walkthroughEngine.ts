@@ -4,7 +4,6 @@ import type {
   WalkthroughStep,
 } from './types.ts';
 
-export const DEMO_REPO_URL = 'https://github.com/sakshamgupta005/patchboard-tasks-api';
 export const DEMO_REPO_OWNER = 'sakshamgupta005';
 export const DEMO_REPO_NAME = 'patchboard-tasks-api';
 

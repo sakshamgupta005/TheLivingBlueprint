@@ -101,10 +101,3 @@ export interface RequestJourney {
     canStepBackward: boolean;
   };
 }
-
-export interface JourneyTraceOptions {
-  entryPointId?: string;
-  startSymbolId?: string;
-  startRoutePath?: string;
-  maxDepth?: number;
-}

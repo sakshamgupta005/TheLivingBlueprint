@@ -36,12 +36,3 @@ export interface ArchitecturalRoom {
     depth: number;
   };
 }
-
-export interface ChatMessagePreview {
-  id: string;
-  sender: 'dog' | 'cat';
-  speakerName: string;
-  tagline: string;
-  content: string;
-  timestamp: string;
-}

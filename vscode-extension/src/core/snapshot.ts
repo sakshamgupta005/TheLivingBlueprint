@@ -155,6 +155,16 @@ export function createWorkspaceSnapshot(
   return snapshot;
 }
 
+/** True when scan data already carries a fingerprint (i.e. is a WorkspaceSnapshot). */
+export function isSnapshot(data: WorkspaceBlueprintData | null | undefined): data is WorkspaceSnapshot {
+  return Boolean(data && 'fingerprint' in data);
+}
+
+/** Returns the data as a snapshot, deriving the fingerprint only when it is missing. */
+export function asSnapshot(data: WorkspaceBlueprintData): WorkspaceSnapshot {
+  return isSnapshot(data) ? data : createWorkspaceSnapshot(data);
+}
+
 /**
  * Retrieves a host-only file excerpt from a snapshot.
  */

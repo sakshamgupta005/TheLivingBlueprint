@@ -10,7 +10,7 @@ import type {
 } from '../../src/server/types.ts';
 import { evaluateAiGate, guardFetch, type AiGateContext } from './security/aiGate.ts';
 import { toChatRepoContext } from './core/chatRequest.ts';
-import { createWorkspaceSnapshot, type WorkspaceSnapshot } from './core/snapshot.ts';
+import { asSnapshot, type WorkspaceSnapshot } from './core/snapshot.ts';
 import type { ChatHistory } from './chatSession.ts';
 import {
   validateEvidenceRefs,
@@ -76,10 +76,6 @@ export function finalizeMessageRefs(
     droppedReferenceCount: droppedCount,
     unverifiedReferenceCount: unverifiedCount,
   };
-}
-
-function asSnapshot(data: WorkspaceBlueprintData): WorkspaceSnapshot {
-  return 'fingerprint' in data ? (data as WorkspaceSnapshot) : createWorkspaceSnapshot(data);
 }
 
 export interface CompanionAnalysisResult {

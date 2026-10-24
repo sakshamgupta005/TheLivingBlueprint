@@ -4,16 +4,6 @@
  * variable environments, branch decisions, and input scenarios.
  */
 
-export interface SimulationVariable {
-  name: string;
-  value: any;
-  type: 'string' | 'number' | 'boolean' | 'null' | 'undefined' | 'object' | 'array' | 'unknown';
-  isUnknown: boolean;
-  sourceExpression?: string;
-}
-
-export type SimulationScope = Record<string, SimulationVariable>;
-
 export interface SimulationConditionResult {
   expression: string;
   result: boolean | 'UNKNOWN';

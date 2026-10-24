@@ -12,19 +12,30 @@ import { getSnapshotExcerpt } from './snapshot.ts';
 
 export type ChatRepoContext = NonNullable<ChatApiRequest['repoContext']>;
 
-function normalizeDependencies(deps?: unknown[]): string[] {
-  if (!deps) return [];
-  return deps.map((d) => {
-    if (typeof d === 'string') return d;
-    if (d && typeof d === 'object') {
-      const conn = d as any;
-      if (conn.sourceRoomId && conn.targetRoomId) {
-        return `${conn.sourceRoomId}->${conn.targetRoomId}`;
-      }
-      return conn.id || String(d);
-    }
-    return String(d);
-  });
+/** Repository identity and redacted excerpts shared by chat and investigation requests. */
+export function localRepoContextBase(snapshot: WorkspaceSnapshot) {
+  return {
+    owner: 'local',
+    repo: snapshot.workspaceName,
+    branch: 'main',
+    commitSha: snapshot.fingerprint,
+    inspectedFiles: snapshot.inspectedFiles.map((f) => ({
+      path: f.path,
+      category: f.category,
+      sizeBytes: f.sizeBytes,
+      contentExcerpt: getSnapshotExcerpt(snapshot, f.path) ?? '',
+    })),
+    discoveredFilePaths: snapshot.discoveredFilePaths,
+    detectedTechnologies: snapshot.detectedTechnologies,
+    // Local workspaces have no CI check runs; verification comes only from local test evidence.
+    ciEvaluation: {
+      status: 'inconclusive',
+      isVerified: false,
+      reason: 'Local workspace scan: automated CI check runs unavailable',
+      checkRunsCount: 0,
+      failedChecks: [],
+    },
+  };
 }
 
 /**
@@ -34,13 +45,6 @@ export function toChatRepoContext(
   snapshot: WorkspaceSnapshot,
   selectedRoomId?: string
 ): ChatRepoContext {
-  const inspectedFiles = snapshot.inspectedFiles.map((f) => ({
-    path: f.path,
-    category: f.category,
-    sizeBytes: f.sizeBytes,
-    contentExcerpt: getSnapshotExcerpt(snapshot, f.path) ?? '',
-  }));
-
   let roomSummaries = snapshot.rooms.map((r) => ({
     id: r.id,
     name: r.name,
@@ -63,23 +67,10 @@ export function toChatRepoContext(
     : undefined;
 
   return {
-    owner: 'local',
-    repo: snapshot.workspaceName,
-    branch: 'main',
-    commitSha: snapshot.fingerprint,
+    ...localRepoContextBase(snapshot),
     totalFiles: snapshot.discoveredFilesCount,
-    inspectedFiles,
-    discoveredFilePaths: snapshot.discoveredFilePaths,
-    detectedTechnologies: snapshot.detectedTechnologies,
     roomSummaries,
     dependencies: selectedRoom?.dependencies || [],
-    ciEvaluation: {
-      status: 'inconclusive',
-      isVerified: false,
-      reason: 'Local workspace scan: automated CI check runs unavailable',
-      checkRunsCount: 0,
-      failedChecks: [],
-    },
     investigationFindings: {},
   };
 }

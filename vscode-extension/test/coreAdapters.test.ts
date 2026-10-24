@@ -18,7 +18,6 @@ import {
   buildInvestigationSystemPrompt,
   getInvestigationCacheSize,
 } from '../../src/server/investigationProvider.ts';
-import { buildSystemPrompt } from '../../src/server/contextBuilder.ts';
 
 const candidatePaths = [
   path.resolve(process.cwd(), 'test', 'fixtures'),
@@ -257,7 +256,6 @@ describe('VS Code Extension - Core Adapter Layer & Cache Invalidation (P2-06)', 
       // Verify that workspace B cache entry is still intact (multi-root isolation)
       // When re-running buildInvestigationSystemPrompt on reqB, it should not have to re-evaluate
       // Check that prompt cache for reqB's commitSha still exists
-      const testKeyB = `${reqB.repoContext.owner}/${reqB.repoContext.repo}##${reqB.repoContext.commitSha}`;
       // Invalidate with empty fingerprint does nothing
       invalidateWorkspaceCaches('small-express', '');
     });

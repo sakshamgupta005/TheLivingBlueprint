@@ -16,7 +16,7 @@ import type { InvestigateApiResponse, RoomInvestigationFinding } from '../../src
 import type { AiErrorInfo, ExecutionTimingMetadata } from '../../src/server/types.ts';
 import { evaluateAiGate, guardFetch, type AiGateContext, type AiState } from './security/aiGate.ts';
 import { toInvestigateRequest } from './core/investigateRequest.ts';
-import { createWorkspaceSnapshot, type WorkspaceSnapshot } from './core/snapshot.ts';
+import { asSnapshot, type WorkspaceSnapshot } from './core/snapshot.ts';
 import {
   validateEvidenceRefs,
   type EvidenceRefCandidate,
@@ -131,10 +131,6 @@ export interface InvestigateRoomParams {
   store: FindingsStore;
   bypassCache?: boolean;
   fetchFn?: typeof fetch;
-}
-
-function asSnapshot(data: WorkspaceBlueprintData): WorkspaceSnapshot {
-  return 'fingerprint' in data ? (data as WorkspaceSnapshot) : createWorkspaceSnapshot(data);
 }
 
 /** Local workspaces have no GitHub URL; the domain validator builds one from owner "local". */

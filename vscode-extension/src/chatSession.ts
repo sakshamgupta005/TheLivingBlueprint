@@ -9,6 +9,7 @@
  */
 
 import type { ChatApiRequest, ExplanationLevel } from '../../src/server/types.ts';
+import { EXPLANATION_LEVELS } from './protocol.ts';
 
 export interface ChatStore {
   get<T>(key: string): T | undefined;
@@ -30,7 +31,6 @@ export const MAX_STORED_TURNS = 20;
 const KEY_PREFIX = 'livingBlueprint.chat.v1:';
 const LEVEL_PREFIX = 'livingBlueprint.explanationLevel.v1:';
 
-export const EXPLANATION_LEVELS: readonly ExplanationLevel[] = ['beginner', 'intermediate', 'technical'];
 export const DEFAULT_EXPLANATION_LEVEL: ExplanationLevel = 'beginner';
 
 export function isExplanationLevel(value: unknown): value is ExplanationLevel {

@@ -3,23 +3,6 @@
  * Framework-independent TypeScript definitions.
  */
 
-export type OperationStatus =
-  | 'idle'
-  | 'in_progress'
-  | 'completed'
-  | 'partial'
-  | 'failed_recoverable'
-  | 'failed_config';
-
-export interface OperationState<T = unknown> {
-  status: OperationStatus;
-  data?: T;
-  error?: string;
-  message?: string;
-  canRetry?: boolean;
-  rateLimitResetTime?: string;
-}
-
 export type RoomStatus =
   | 'planned'
   | 'implemented'

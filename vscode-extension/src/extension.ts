@@ -26,7 +26,7 @@ import { shouldIgnorePath, isSensitivePath } from './scanFilters.ts';
 import { createConsentManager } from './security/consent.ts';
 import { createCredentialService, InvalidCredentialError, type CredentialId } from './security/credentials.ts';
 import { evaluateAiGate, buildPayloadPreview, type AiGateContext } from './security/aiGate.ts';
-import { createWorkspaceSnapshot, type WorkspaceSnapshot } from './core/snapshot.ts';
+import { asSnapshot, createWorkspaceSnapshot, isSnapshot, type WorkspaceSnapshot } from './core/snapshot.ts';
 
 let globalScanController: ScanController | undefined;
 
@@ -97,7 +97,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!data) {
       return { notice: 'No workspace snapshot yet. Run a scan first.', previewOnly: true, networkCallMade: false, credentialsIncluded: false };
     }
-    const snapshot = 'fingerprint' in data ? (data as WorkspaceSnapshot) : createWorkspaceSnapshot(data);
+    const snapshot = asSnapshot(data);
     return buildPayloadPreview(snapshot, undefined, await evaluateAiGate(gateContext));
   };
 
@@ -155,7 +155,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // P2-10: findings per folder/room keyed to the snapshot fingerprint (stale, never silently deleted).
   const findingsStore = createFindingsStore(context.workspaceState);
   const currentFingerprint = (): string | undefined =>
-    latestData && 'fingerprint' in latestData ? (latestData as WorkspaceSnapshot).fingerprint : undefined;
+    isSnapshot(latestData) ? latestData.fingerprint : undefined;
 
   // Findings (with stale flags) change on every scan. History and level only change per folder,
   // so they are not re-sent on rescans: re-sending would reset a question that is still pending.
@@ -344,7 +344,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // P2-12: architecture lenses and read-only evidence chain from the current snapshot.
   const currentSnapshot = (): WorkspaceSnapshot | undefined =>
-    latestData && 'fingerprint' in latestData ? (latestData as WorkspaceSnapshot) : undefined;
+    isSnapshot(latestData) ? latestData : undefined;
 
   const handleSelectArchitectureLens = (lensId: ArchitectureLensIdValue) => {
     const snapshot = currentSnapshot();
@@ -375,14 +375,14 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const withLocalTestEvidence = (data: WorkspaceBlueprintData): WorkspaceBlueprintData => {
     const folderUri = activeFolderUri();
-    if (!folderUri || !('fingerprint' in data)) return data;
-    return applyLocalTestEvidence(data as WorkspaceSnapshot, testRunStore.get(folderUri)).snapshot;
+    if (!folderUri || !isSnapshot(data)) return data;
+    return applyLocalTestEvidence(data, testRunStore.get(folderUri)).snapshot;
   };
 
   const postTestEvidenceState = () => {
     const folderUri = activeFolderUri();
     const record = folderUri ? testRunStore.get(folderUri) : undefined;
-    const snapshot = baseData && 'fingerprint' in baseData ? (baseData as WorkspaceSnapshot) : undefined;
+    const snapshot = isSnapshot(baseData) ? baseData : undefined;
     if (!record || !snapshot) return;
     const applied = applyLocalTestEvidence(snapshot, record);
     provider.post({
@@ -405,7 +405,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const folderPath = scanController.getActiveFolderPath();
     const folder = vscode.workspace.workspaceFolders?.find((f) => f.uri.fsPath === folderPath);
     const folderUri = folder?.uri.toString();
-    const snapshot = baseData && 'fingerprint' in baseData ? (baseData as WorkspaceSnapshot) : undefined;
+    const snapshot = isSnapshot(baseData) ? baseData : undefined;
 
     testRunInProgress = true;
     provider.post({ type: 'testRunState', state: 'running', message: 'Waiting for confirmation…' });

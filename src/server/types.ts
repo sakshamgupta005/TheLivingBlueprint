@@ -67,14 +67,6 @@ export interface ValidatedChatResponse {
   nextSpeaker?: CompanionSpeaker | null;
 }
 
-export interface ChatTurn {
-  id: string;
-  userMessage: string;
-  timestamp: string;
-  replies: CompanionReplyMessage[];
-  selectedRoomId?: string;
-}
-
 export interface ChatApiRequest {
   message: string;
   explanationLevel?: ExplanationLevel;

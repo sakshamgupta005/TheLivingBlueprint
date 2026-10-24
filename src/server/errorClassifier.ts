@@ -293,12 +293,6 @@ export function isTransientError(errorInfo: AiErrorInfo): boolean {
   return false;
 }
 
-export function calculateBackoffWithJitter(attempt: number, baseMs = 500, maxMs = 2000): number {
-  const exp = Math.min(maxMs, baseMs * Math.pow(2, attempt - 1));
-  const jitter = Math.floor(Math.random() * 150);
-  return exp + jitter;
-}
-
 export function classifyGroqError(
   status: number,
   statusText: string,

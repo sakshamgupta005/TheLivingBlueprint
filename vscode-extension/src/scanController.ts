@@ -8,7 +8,6 @@ import type { WorkspaceBlueprintData } from './workspaceScanner.ts';
 import {
   createWorkspaceSnapshot,
   invalidateWorkspaceCaches,
-  type WorkspaceSnapshot,
 } from './core/snapshot.ts';
 
 export type ScanStateStatus =

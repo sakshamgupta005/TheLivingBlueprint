@@ -172,11 +172,50 @@ export function resetRejectedMessagesCount(): void {
   rejectedMessageCounter = 0;
 }
 
+/** Counts and returns a validation failure. */
+function reject(reason: string): ValidationFailure {
+  rejectedMessageCounter++;
+  return { valid: false, reason };
+}
+
 const MAX_PATH_LENGTH = 1024;
 const MAX_QUESTION_LENGTH = 4096;
 const MAX_ROOM_ID_LENGTH = 256;
 const MIN_LINE_NUMBER = 1;
 const MAX_LINE_NUMBER = 1_000_000;
+
+/** Validates a roomId that must exist in the current snapshot (no snapshot means no valid room). */
+function requireRoomId(
+  command: string,
+  value: unknown,
+  options: ProtocolValidationOptions
+): { roomId: string } | ValidationFailure {
+  const roomId = typeof value === 'string' ? value.trim() : '';
+  const reason = !roomId
+    ? `${command} requires a non-empty string roomId`
+    : roomId.length > MAX_ROOM_ID_LENGTH
+    ? `roomId exceeds max length of ${MAX_ROOM_ID_LENGTH}`
+    : !new Set(options.validRoomIds ?? []).has(roomId)
+    ? `Room ID '${roomId}' does not exist in active snapshot`
+    : undefined;
+  return reason ? reject(reason) : { roomId };
+}
+
+/** Validates a roomId that may be omitted; when present it must exist in the snapshot (if one is known). */
+function optionalRoomId(
+  command: string,
+  value: unknown,
+  options: ProtocolValidationOptions
+): { roomId?: string } | ValidationFailure {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== 'string') return reject(`${command} roomId must be a string or null`);
+  const roomId = value.trim();
+  if (roomId.length > MAX_ROOM_ID_LENGTH) return reject(`roomId exceeds max length of ${MAX_ROOM_ID_LENGTH}`);
+  if (roomId && options.validRoomIds && !new Set(options.validRoomIds).has(roomId)) {
+    return reject(`Room ID '${roomId}' does not exist in active snapshot`);
+  }
+  return { roomId: roomId || undefined };
+}
 
 /**
  * Validates an arbitrary inbound webview payload against the typed message protocol.
@@ -186,16 +225,14 @@ export function validateInboundMessage(
   options: ProtocolValidationOptions = {}
 ): ValidationResult {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    rejectedMessageCounter++;
-    return { valid: false, reason: 'Payload must be a non-null object' };
+    return reject('Payload must be a non-null object');
   }
 
   const obj = raw as Record<string, unknown>;
   const command = obj.command;
 
   if (typeof command !== 'string') {
-    rejectedMessageCounter++;
-    return { valid: false, reason: 'Message missing string command field' };
+    return reject('Message missing string command field');
   }
 
   if (!ALLOWED_COMMANDS.includes(command as InboundCommand)) {
@@ -210,12 +247,10 @@ export function validateInboundMessage(
   switch (command as InboundCommand) {
     case 'openFile': {
       if (typeof obj.path !== 'string' || obj.path.trim().length === 0) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: 'openFile requires a non-empty string path' };
+        return reject('openFile requires a non-empty string path');
       }
       if (obj.path.length > MAX_PATH_LENGTH) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: `path exceeds maximum length of ${MAX_PATH_LENGTH}` };
+        return reject(`path exceeds maximum length of ${MAX_PATH_LENGTH}`);
       }
 
       let parsedLine: number | undefined;
@@ -226,18 +261,15 @@ export function validateInboundMessage(
         } else if (typeof obj.line === 'string' && /^-?\d+(\.\d+)?$/.test(obj.line.trim())) {
           num = Number(obj.line.trim());
         } else {
-          rejectedMessageCounter++;
-          return { valid: false, reason: 'line must be an integer' };
+          return reject('line must be an integer');
         }
 
         if (Number.isNaN(num) || !Number.isFinite(num) || !Number.isInteger(num)) {
-          rejectedMessageCounter++;
-          return { valid: false, reason: 'line must be a valid integer' };
+          return reject('line must be a valid integer');
         }
 
         if (num < MIN_LINE_NUMBER) {
-          rejectedMessageCounter++;
-          return { valid: false, reason: `line must be greater than or equal to ${MIN_LINE_NUMBER}` };
+          return reject(`line must be greater than or equal to ${MIN_LINE_NUMBER}`);
         }
 
         // Clamp to maximum allowed line
@@ -276,64 +308,35 @@ export function validateInboundMessage(
 
     case 'setExplanationLevel': {
       if (!EXPLANATION_LEVELS.includes(obj.level as ExplanationLevelValue)) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: 'level must be beginner, intermediate or technical' };
+        return reject('level must be beginner, intermediate or technical');
       }
       return { valid: true, message: { command: 'setExplanationLevel', level: obj.level as ExplanationLevelValue } };
     }
 
     case 'investigateRoom': {
-      if (typeof obj.roomId !== 'string' || obj.roomId.trim().length === 0) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: 'investigateRoom requires a non-empty string roomId' };
-      }
-      const roomId = obj.roomId.trim();
-      if (roomId.length > MAX_ROOM_ID_LENGTH) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: `roomId exceeds max length of ${MAX_ROOM_ID_LENGTH}` };
-      }
-      // Without a snapshot there is no valid room to investigate.
-      const idSet = options.validRoomIds instanceof Set ? options.validRoomIds : new Set(options.validRoomIds ?? []);
-      if (!idSet.has(roomId)) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: `Room ID '${roomId}' does not exist in active snapshot` };
-      }
+      const room = requireRoomId(command, obj.roomId, options);
+      if ('valid' in room) return room;
+      const { roomId } = room;
       if (obj.bypassCache !== undefined && typeof obj.bypassCache !== 'boolean') {
-        rejectedMessageCounter++;
-        return { valid: false, reason: 'bypassCache must be a boolean' };
+        return reject('bypassCache must be a boolean');
       }
       return { valid: true, message: { command: 'investigateRoom', roomId, bypassCache: obj.bypassCache === true } };
     }
 
     case 'handoffRepairPrompt': {
-      if (typeof obj.roomId !== 'string' || obj.roomId.trim().length === 0 || obj.roomId.length > MAX_ROOM_ID_LENGTH) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: 'handoffRepairPrompt requires a valid roomId' };
-      }
-      const roomId = obj.roomId.trim();
-      const idSet = options.validRoomIds instanceof Set ? options.validRoomIds : new Set(options.validRoomIds ?? []);
-      if (!idSet.has(roomId)) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: `Room ID '${roomId}' does not exist in active snapshot` };
-      }
+      const room = requireRoomId(command, obj.roomId, options);
+      if ('valid' in room) return room;
+      const { roomId } = room;
       if (obj.action !== 'copy' && obj.action !== 'save') {
-        rejectedMessageCounter++;
-        return { valid: false, reason: "action must be 'copy' or 'save'" };
+        return reject("action must be 'copy' or 'save'");
       }
       return { valid: true, message: { command: 'handoffRepairPrompt', roomId, action: obj.action } };
     }
 
     case 'reinspectFinding': {
-      if (typeof obj.roomId !== 'string' || obj.roomId.trim().length === 0 || obj.roomId.length > MAX_ROOM_ID_LENGTH) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: 'reinspectFinding requires a valid roomId' };
-      }
-      const roomId = obj.roomId.trim();
-      const idSet = options.validRoomIds instanceof Set ? options.validRoomIds : new Set(options.validRoomIds ?? []);
-      if (!idSet.has(roomId)) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: `Room ID '${roomId}' does not exist in active snapshot` };
-      }
+      const room = requireRoomId(command, obj.roomId, options);
+      if ('valid' in room) return room;
+      const { roomId } = room;
       return { valid: true, message: { command: 'reinspectFinding', roomId } };
     }
 
@@ -344,30 +347,21 @@ export function validateInboundMessage(
 
     case 'selectArchitectureLens': {
       if (!ARCHITECTURE_LENS_IDS.includes(obj.lensId as ArchitectureLensIdValue)) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: 'Unknown architecture lens id' };
+        return reject('Unknown architecture lens id');
       }
       return { valid: true, message: { command: 'selectArchitectureLens', lensId: obj.lensId as ArchitectureLensIdValue } };
     }
 
     case 'requestEvidenceChain': {
-      if (typeof obj.roomId !== 'string' || obj.roomId.trim().length === 0 || obj.roomId.length > MAX_ROOM_ID_LENGTH) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: 'requestEvidenceChain requires a valid roomId' };
-      }
-      const roomId = obj.roomId.trim();
-      const idSet = options.validRoomIds instanceof Set ? options.validRoomIds : new Set(options.validRoomIds ?? []);
-      if (!idSet.has(roomId)) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: `Room ID '${roomId}' does not exist in active snapshot` };
-      }
+      const room = requireRoomId(command, obj.roomId, options);
+      if ('valid' in room) return room;
+      const { roomId } = room;
       return { valid: true, message: { command: 'requestEvidenceChain', roomId } };
     }
 
     case 'toggleAiConsent': {
       if (typeof obj.enabled !== 'boolean') {
-        rejectedMessageCounter++;
-        return { valid: false, reason: 'toggleAiConsent requires a boolean enabled field' };
+        return reject('toggleAiConsent requires a boolean enabled field');
       }
       return {
         valid: true,
@@ -376,82 +370,27 @@ export function validateInboundMessage(
     }
 
     case 'selectRoom': {
-      if (obj.roomId === null || obj.roomId === undefined) {
-        return { valid: true, message: { command: 'selectRoom', roomId: null } };
-      }
-
-      if (typeof obj.roomId !== 'string') {
-        rejectedMessageCounter++;
-        return { valid: false, reason: 'selectRoom roomId must be string or null' };
-      }
-
-      const roomId = obj.roomId.trim();
-      if (roomId.length > MAX_ROOM_ID_LENGTH) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: `roomId exceeds max length of ${MAX_ROOM_ID_LENGTH}` };
-      }
-
-      if (options.validRoomIds) {
-        const idSet =
-          options.validRoomIds instanceof Set
-            ? options.validRoomIds
-            : new Set(options.validRoomIds);
-        if (roomId.length > 0 && !idSet.has(roomId)) {
-          rejectedMessageCounter++;
-          return { valid: false, reason: `Room ID '${roomId}' does not exist in active snapshot` };
-        }
-      }
-
-      return {
-        valid: true,
-        message: { command: 'selectRoom', roomId: roomId || null },
-      };
+      const room = optionalRoomId(command, obj.roomId, options);
+      if ('valid' in room) return room;
+      return { valid: true, message: { command: 'selectRoom', roomId: room.roomId ?? null } };
     }
 
     case 'askCompanion': {
       if (typeof obj.question !== 'string' || obj.question.trim().length === 0) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: 'askCompanion requires a non-empty string question' };
+        return reject('askCompanion requires a non-empty string question');
       }
       if (obj.question.length > MAX_QUESTION_LENGTH) {
-        rejectedMessageCounter++;
-        return {
-          valid: false,
-          reason: `question exceeds maximum length of ${MAX_QUESTION_LENGTH}`,
-        };
+        return reject(`question exceeds maximum length of ${MAX_QUESTION_LENGTH}`);
       }
 
-      let parsedRoomId: string | undefined;
-      if (obj.roomId !== undefined && obj.roomId !== null) {
-        if (typeof obj.roomId !== 'string') {
-          rejectedMessageCounter++;
-          return { valid: false, reason: 'askCompanion roomId must be a string' };
-        }
-        parsedRoomId = obj.roomId.trim();
-        if (parsedRoomId.length > MAX_ROOM_ID_LENGTH) {
-          rejectedMessageCounter++;
-          return { valid: false, reason: `roomId exceeds max length of ${MAX_ROOM_ID_LENGTH}` };
-        }
-        if (options.validRoomIds && parsedRoomId.length > 0) {
-          const idSet =
-            options.validRoomIds instanceof Set
-              ? options.validRoomIds
-              : new Set(options.validRoomIds);
-          if (!idSet.has(parsedRoomId)) {
-            rejectedMessageCounter++;
-            return {
-              valid: false,
-              reason: `Room ID '${parsedRoomId}' does not exist in active snapshot`,
-            };
-          }
-        }
-      }
+      const room = optionalRoomId(command, obj.roomId, options);
+      if ('valid' in room) return room;
+      const parsedRoomId = room.roomId;
 
       let explanationLevel: ExplanationLevelValue | undefined;
       if (obj.explanationLevel !== undefined && obj.explanationLevel !== null) {
         if (!EXPLANATION_LEVELS.includes(obj.explanationLevel as ExplanationLevelValue)) {
-          rejectedMessageCounter++;
-          return { valid: false, reason: 'explanationLevel must be beginner, intermediate or technical' };
+          return reject('explanationLevel must be beginner, intermediate or technical');
         }
         explanationLevel = obj.explanationLevel as ExplanationLevelValue;
       }
@@ -469,15 +408,10 @@ export function validateInboundMessage(
 
     case 'selectFolder': {
       if (typeof obj.folderPath !== 'string' || obj.folderPath.trim().length === 0) {
-        rejectedMessageCounter++;
-        return { valid: false, reason: 'selectFolder requires a non-empty string folderPath' };
+        return reject('selectFolder requires a non-empty string folderPath');
       }
       if (obj.folderPath.length > MAX_PATH_LENGTH) {
-        rejectedMessageCounter++;
-        return {
-          valid: false,
-          reason: `folderPath exceeds maximum length of ${MAX_PATH_LENGTH}`,
-        };
+        return reject(`folderPath exceeds maximum length of ${MAX_PATH_LENGTH}`);
       }
       return {
         valid: true,

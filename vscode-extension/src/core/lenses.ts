@@ -39,10 +39,6 @@ export const LENS_IDS = [
 ] as const;
 export type LensId = (typeof LENS_IDS)[number];
 
-export function isLensId(value: unknown): value is LensId {
-  return LENS_IDS.includes(value as LensId);
-}
-
 export interface LensView {
   lensId: LensId;
   title: string;

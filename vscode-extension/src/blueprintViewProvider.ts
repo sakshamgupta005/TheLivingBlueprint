@@ -2,15 +2,15 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import type { WorkspaceBlueprintData } from './workspaceScanner.ts';
-import type { CompanionAnalysisResult, CompanionMessage } from './companionEngine.ts';
+import type { CompanionAnalysisResult } from './companionEngine.ts';
 import { validateInboundMessage, type ExplanationLevelValue, type ArchitectureLensIdValue } from './protocol.ts';
+import { resolveWorkspaceFile } from './pathResolver.ts';
 
 export type AskCompanionHandler = (
   question: string,
   roomId?: string,
   explanationLevel?: ExplanationLevelValue
 ) => Promise<void>;
-import { resolveWorkspaceFile } from './pathResolver.ts';
 
 export class BlueprintViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'livingBlueprint.overviewView';
@@ -18,7 +18,6 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
   private _editorPanel?: vscode.WebviewPanel;
   private _latestData: WorkspaceBlueprintData | null = null;
   private _latestCompanionAnalysis: CompanionAnalysisResult | null = null;
-  private _isScanning = false;
   private _hasApiKey = false;
   private _aiConsent = false;
   private _selectedRoomId: string | null = null;
@@ -192,14 +191,7 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
   }
 
   private _getActiveRoot(): string | undefined {
-    const wsFolders = vscode.workspace.workspaceFolders;
-    const roots =
-      wsFolders && wsFolders.length > 0
-        ? wsFolders.map((f) => f.uri.fsPath)
-        : this._workspaceRoot
-        ? [this._workspaceRoot]
-        : [];
-
+    const roots = this._getWorkspaceRoots();
     const candidate = this._latestFolders?.activeFolderPath;
     if (candidate && roots.includes(candidate)) {
       return candidate;
@@ -216,153 +208,151 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
 
   /** The single validated entry point for webview messages (also driven by host smoke tests). */
   public async handleInboundMessage(rawMessage: unknown): Promise<void> {
-    {
-      const validRoomIds = this._latestData?.rooms.map((r) => r.id);
-      const validation = validateInboundMessage(rawMessage, { validRoomIds });
+    const validRoomIds = this._latestData?.rooms.map((r) => r.id);
+    const validation = validateInboundMessage(rawMessage, { validRoomIds });
 
-      if (!validation.valid) {
-        console.warn(`[Living Blueprint] Inbound message rejected: ${validation.reason}`);
-        // Tell the UI so a pending spinner or watchdog can stop instead of hanging.
-        const raw = rawMessage as { command?: unknown; roomId?: unknown } | null;
-        this._postToAll({
-          type: 'requestRejected',
-          command: typeof raw?.command === 'string' ? raw.command.slice(0, 64) : undefined,
-          roomId: typeof raw?.roomId === 'string' ? raw.roomId.slice(0, 256) : undefined,
-          reason: validation.reason,
+    if (!validation.valid) {
+      console.warn(`[Living Blueprint] Inbound message rejected: ${validation.reason}`);
+      // Tell the UI so a pending spinner or watchdog can stop instead of hanging.
+      const raw = rawMessage as { command?: unknown; roomId?: unknown } | null;
+      this._postToAll({
+        type: 'requestRejected',
+        command: typeof raw?.command === 'string' ? raw.command.slice(0, 64) : undefined,
+        roomId: typeof raw?.roomId === 'string' ? raw.roomId.slice(0, 256) : undefined,
+        reason: validation.reason,
+      });
+      return;
+    }
+
+    const message = validation.message;
+    switch (message.command) {
+      case 'openFile': {
+        const workspaceRoots = this._getWorkspaceRoots();
+        const activeRoot = this._getActiveRoot();
+        const resolution = resolveWorkspaceFile(message.path, {
+          workspaceRoots,
+          activeRoot,
+          discoveredFiles: this._latestData ? this._latestData.discoveredFilePaths : null,
+          hasSnapshot: Boolean(this._latestData),
         });
-        return;
-      }
 
-      const message = validation.message;
-      switch (message.command) {
-        case 'openFile': {
-          const workspaceRoots = this._getWorkspaceRoots();
-          const activeRoot = this._getActiveRoot();
-          const resolution = resolveWorkspaceFile(message.path, {
-            workspaceRoots,
-            activeRoot,
-            discoveredFiles: this._latestData ? this._latestData.discoveredFilePaths : null,
-            hasSnapshot: Boolean(this._latestData),
-          });
+        if (!resolution.success) {
+          vscode.window.showWarningMessage('Invalid or restricted file path');
+          return;
+        }
 
-          if (!resolution.success) {
-            vscode.window.showWarningMessage('Invalid or restricted file path');
-            return;
-          }
-
-          try {
-            const doc = await vscode.workspace.openTextDocument(
-              vscode.Uri.file(resolution.resolvedPath)
+        try {
+          const doc = await vscode.workspace.openTextDocument(
+            vscode.Uri.file(resolution.resolvedPath)
+          );
+          const editor = await vscode.window.showTextDocument(doc);
+          if (message.line !== undefined && message.line > 0) {
+            const lineIdx = message.line - 1;
+            const pos = new vscode.Position(lineIdx, 0);
+            editor.selection = new vscode.Selection(pos, pos);
+            editor.revealRange(
+              new vscode.Range(pos, pos),
+              vscode.TextEditorRevealType.InCenter
             );
-            const editor = await vscode.window.showTextDocument(doc);
-            if (message.line !== undefined && message.line > 0) {
-              const lineIdx = message.line - 1;
-              const pos = new vscode.Position(lineIdx, 0);
-              editor.selection = new vscode.Selection(pos, pos);
-              editor.revealRange(
-                new vscode.Range(pos, pos),
-                vscode.TextEditorRevealType.InCenter
-              );
-            }
-          } catch {
-            vscode.window.showErrorMessage('Could not open file in editor');
           }
-          break;
+        } catch {
+          vscode.window.showErrorMessage('Could not open file in editor');
         }
-        case 'refresh': {
-          if (this._onRefreshRequested) {
-            this._onRefreshRequested();
+        break;
+      }
+      case 'refresh': {
+        if (this._onRefreshRequested) {
+          this._onRefreshRequested();
+        }
+        break;
+      }
+      case 'openEditorPanel': {
+        if (this._onOpenEditorRequested) {
+          this._onOpenEditorRequested();
+        }
+        break;
+      }
+      case 'askCompanion': {
+        if (this._onAskCompanion) {
+          this.setCompanionThinking(true);
+          try {
+            await this._onAskCompanion(
+              message.question,
+              message.roomId ?? this._selectedRoomId ?? undefined,
+              message.explanationLevel
+            );
+          } finally {
+            this.setCompanionThinking(false);
           }
-          break;
         }
-        case 'openEditorPanel': {
-          if (this._onOpenEditorRequested) {
-            this._onOpenEditorRequested();
-          }
-          break;
+        break;
+      }
+      case 'configureApiKey': {
+        if (this._onConfigureApiKey) {
+          await this._onConfigureApiKey();
         }
-        case 'askCompanion': {
-          if (this._onAskCompanion) {
-            this.setCompanionThinking(true);
-            try {
-              await this._onAskCompanion(
-                message.question,
-                message.roomId ?? this._selectedRoomId ?? undefined,
-                message.explanationLevel
-              );
-            } finally {
-              this.setCompanionThinking(false);
-            }
-          }
-          break;
+        break;
+      }
+      case 'toggleAiConsent': {
+        if (this._onToggleAiConsent) {
+          await this._onToggleAiConsent(message.enabled);
         }
-        case 'configureApiKey': {
-          if (this._onConfigureApiKey) {
-            await this._onConfigureApiKey();
-          }
-          break;
+        break;
+      }
+      case 'selectRoom': {
+        const changed = (message.roomId || null) !== this._selectedRoomId;
+        this._selectedRoomId = message.roomId || null;
+        this._postToAll({
+          type: 'roomSelected',
+          roomId: this._selectedRoomId,
+        });
+        if (changed) this._onRoomSelected?.(this._selectedRoomId);
+        break;
+      }
+      case 'clearConversation': {
+        await this._onClearConversation?.();
+        break;
+      }
+      case 'setExplanationLevel': {
+        await this._onSetExplanationLevel?.(message.level);
+        break;
+      }
+      case 'investigateRoom': {
+        await this._onInvestigateRoom?.(message.roomId, message.bypassCache === true);
+        break;
+      }
+      case 'handoffRepairPrompt': {
+        await this._onHandoffRepairPrompt?.(message.roomId, message.action);
+        break;
+      }
+      case 'selectArchitectureLens': {
+        this._onSelectArchitectureLens?.(message.lensId);
+        break;
+      }
+      case 'requestEvidenceChain': {
+        this._onRequestEvidenceChain?.(message.roomId);
+        break;
+      }
+      case 'runProjectTests': {
+        await this._onRunProjectTests?.();
+        break;
+      }
+      case 'reinspectFinding': {
+        await this._onReinspectFinding?.(message.roomId);
+        break;
+      }
+      case 'selectFolder': {
+        if (this._onSelectFolder) {
+          this._onSelectFolder(message.folderPath);
         }
-        case 'toggleAiConsent': {
-          if (this._onToggleAiConsent) {
-            await this._onToggleAiConsent(message.enabled);
-          }
-          break;
+        break;
+      }
+      case 'requestPayloadPreview': {
+        if (this._onRequestPayloadPreview) {
+          const payload = await this._onRequestPayloadPreview();
+          this._postToAll({ type: 'payloadPreview', payload });
         }
-        case 'selectRoom': {
-          const changed = (message.roomId || null) !== this._selectedRoomId;
-          this._selectedRoomId = message.roomId || null;
-          this._postToAll({
-            type: 'roomSelected',
-            roomId: this._selectedRoomId,
-          });
-          if (changed) this._onRoomSelected?.(this._selectedRoomId);
-          break;
-        }
-        case 'clearConversation': {
-          await this._onClearConversation?.();
-          break;
-        }
-        case 'setExplanationLevel': {
-          await this._onSetExplanationLevel?.(message.level);
-          break;
-        }
-        case 'investigateRoom': {
-          await this._onInvestigateRoom?.(message.roomId, message.bypassCache === true);
-          break;
-        }
-        case 'handoffRepairPrompt': {
-          await this._onHandoffRepairPrompt?.(message.roomId, message.action);
-          break;
-        }
-        case 'selectArchitectureLens': {
-          this._onSelectArchitectureLens?.(message.lensId);
-          break;
-        }
-        case 'requestEvidenceChain': {
-          this._onRequestEvidenceChain?.(message.roomId);
-          break;
-        }
-        case 'runProjectTests': {
-          await this._onRunProjectTests?.();
-          break;
-        }
-        case 'reinspectFinding': {
-          await this._onReinspectFinding?.(message.roomId);
-          break;
-        }
-        case 'selectFolder': {
-          if (this._onSelectFolder) {
-            this._onSelectFolder(message.folderPath);
-          }
-          break;
-        }
-        case 'requestPayloadPreview': {
-          if (this._onRequestPayloadPreview) {
-            const payload = await this._onRequestPayloadPreview();
-            this._postToAll({ type: 'payloadPreview', payload });
-          }
-          break;
-        }
+        break;
       }
     }
   }
@@ -412,15 +402,7 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  public appendCompanionMessages(messages: CompanionMessage[]) {
-    this._postToAll({
-      type: 'companionReplies',
-      messages,
-    });
-  }
-
   public setScanning(isScanning: boolean) {
-    this._isScanning = isScanning;
     this._postToAll({
       type: 'scanningStatus',
       isScanning,

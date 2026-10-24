@@ -5,20 +5,6 @@
 
 export type TestMappingType = 'syntax' | 'heuristic';
 
-export type EvidenceClaimType =
-  | 'test_file_detected'
-  | 'test_references_code'
-  | 'test_executed'
-  | 'test_passed';
-
-export interface TestClaimItem {
-  type: EvidenceClaimType;
-  established: boolean;
-  label: string;
-  detail: string;
-  provenance?: 'syntax' | 'heuristic';
-}
-
 export interface MappedTestAssertion {
   expression: string;
   line: number;

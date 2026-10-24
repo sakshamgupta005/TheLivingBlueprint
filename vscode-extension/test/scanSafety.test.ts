@@ -13,7 +13,6 @@ import {
   isSensitivePath,
   parseGitIgnore,
   redactSourceContent,
-  shouldIgnorePath,
 } from '../src/scanFilters.ts';
 
 const candidatePaths = [

@@ -238,11 +238,7 @@ export async function discoverWorkspaceFiles(
   rootDir: string,
   options: DiscoveryOptions = {}
 ): Promise<string[]> {
-  const result = await discoverWorkspaceFilesDetailed(rootDir, options);
-  const arr = [...result.discoveredFilePaths];
-  (arr as any).skippedFiles = result.skippedFiles;
-  (arr as any).truncation = result.truncation;
-  return arr;
+  return (await discoverWorkspaceFilesDetailed(rootDir, options)).discoveredFilePaths;
 }
 
 /**
