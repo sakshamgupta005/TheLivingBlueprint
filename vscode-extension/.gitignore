@@ -2,3 +2,5 @@ node_modules/
 out/
 *.log
 .vscode-test/
+# Built packages (tracked release copies stay tracked)
+*.vsix
