@@ -24,7 +24,7 @@ export interface ChatMessageItem {
   evidenceReference?: string;
   timing?: ExecutionTimingMetadata;
   workflowDiagram?: WorkflowDiagram;
-  providerUsed?: 'gemini' | 'groq' | 'cloudflare';
+  providerUsed?: 'gemini' | 'groq' | 'cloudflare' | 'omniroute';
   suggestedFollowUps?: string[];
   cached?: boolean;
 }

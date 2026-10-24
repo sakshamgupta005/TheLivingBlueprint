@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 
 const isWatch = process.argv.includes('--watch');
+const isProduction = process.argv.includes('--production') || process.env.NODE_ENV === 'production';
 
 const buildOptions = {
   entryPoints: ['src/extension.ts'],
@@ -12,7 +13,8 @@ const buildOptions = {
   external: ['vscode'],
   format: 'cjs',
   platform: 'node',
-  sourcemap: true,
+  sourcemap: !isProduction,
+  minify: isProduction,
   target: 'node18',
   logLevel: 'info',
 };
@@ -40,7 +42,13 @@ async function run() {
     console.log('[Living Blueprint] Watching for changes...');
   } else {
     await esbuild.build(buildOptions);
-    console.log('[Living Blueprint] Compiled out/extension.js successfully.');
+    if (isProduction) {
+      const mapFile = path.join(__dirname, 'out', 'extension.js.map');
+      if (fs.existsSync(mapFile)) {
+        fs.unlinkSync(mapFile);
+      }
+    }
+    console.log(`[Living Blueprint] Compiled out/extension.js successfully (${isProduction ? 'production' : 'development'}).`);
   }
 }
 

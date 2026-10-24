@@ -139,12 +139,14 @@ OUTPUT FORMAT (JSON Object):
   return promptResult;
 }
 
-import { executeAiWithFallback } from './aiProviderRunner.ts';
+import { executeAiWithStrategy, type AiStrategyOptions } from './aiHedging.ts';
 
 export async function executeRoomInvestigation(
   request: InvestigateApiRequest,
   env: Record<string, string | undefined> = process.env,
-  fetchFn: typeof fetch = fetch
+  fetchFn: typeof fetch = fetch,
+  /** Optional: { strategy: 'hedged' } for fastest-wins across providers (default: sequential). */
+  strategy?: AiStrategyOptions
 ): Promise<InvestigateApiResponse> {
   const startTime = Date.now();
 
@@ -258,7 +260,7 @@ export async function executeRoomInvestigation(
     ],
   };
 
-  const outcome = await executeAiWithFallback(
+  const outcome = await executeAiWithStrategy(
     {
       systemInstruction: systemPrompt,
       messages: [
@@ -274,7 +276,8 @@ export async function executeRoomInvestigation(
       perProviderTimeoutMs: 12000,
     },
     env,
-    fetchFn
+    fetchFn,
+    strategy
   );
 
   if (!outcome.success) {

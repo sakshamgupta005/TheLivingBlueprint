@@ -134,8 +134,8 @@ export interface ExecutionTimingMetadata {
   candidatesTokens?: number;
   totalTokens?: number;
   thinkingLevel?: 'low' | 'high';
-  providerUsed?: 'gemini' | 'groq' | 'cloudflare';
-  provider?: 'gemini' | 'groq' | 'cloudflare';
+  providerUsed?: 'gemini' | 'groq' | 'cloudflare' | 'omniroute';
+  provider?: 'gemini' | 'groq' | 'cloudflare' | 'omniroute';
   fallbackUsed?: boolean;
   cached?: boolean;
   model?: string;
@@ -174,8 +174,8 @@ export interface ChatApiResponse {
   code?: 'CONFIG_REQUIRED' | 'RATE_LIMITED' | 'PROVIDER_ERROR' | 'INVALID_REQUEST';
   errorInfo?: AiErrorInfo;
   timing?: ExecutionTimingMetadata;
-  providerUsed?: 'gemini' | 'groq' | 'cloudflare';
-  provider?: 'gemini' | 'groq' | 'cloudflare';
+  providerUsed?: 'gemini' | 'groq' | 'cloudflare' | 'omniroute';
+  provider?: 'gemini' | 'groq' | 'cloudflare' | 'omniroute';
   warning?: string;
   fallbackUsed?: boolean;
 }

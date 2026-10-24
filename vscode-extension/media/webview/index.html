@@ -129,6 +129,58 @@
           <span class="text-empty-hint">None listed</span>
         </div>
       </div>
+
+      <!-- Evidence Chain Section (P2-12 / P2-13) -->
+      <div class="inspector-evidence-chain-section" id="inspectorEvidenceChainSection">
+        <div class="evidence-chain-header-row">
+          <span class="evidence-chain-title">TEST ↔ IMPLEMENTATION EVIDENCE CHAIN</span>
+          <span class="evidence-chain-status-badge hidden" id="evidenceChainBadge"></span>
+        </div>
+
+        <!-- Project Test Runner Action & Status (P2-13) -->
+        <div class="test-run-action-row">
+          <button type="button" class="btn-action btn-run-tests" id="btnRunProjectTests" title="Execute observed project test command to establish real verification evidence">
+            <span class="btn-run-tests-icon" id="runTestsIcon">▶</span>
+            <span id="btnRunTestsText">Run Project Tests</span>
+          </button>
+          <span class="test-run-indicator-badge hidden" id="testRunIndicatorBadge"></span>
+        </div>
+
+        <div class="test-run-banner hidden" id="testRunBanner">
+          <div class="test-run-banner-top">
+            <div class="test-run-banner-status">
+              <span class="test-run-status-pill" id="testRunStatusPill">RUNNING</span>
+              <span class="test-run-timestamp" id="testRunTimestamp"></span>
+            </div>
+            <button type="button" class="btn-dismiss-banner" id="btnDismissTestRunBanner" title="Dismiss banner">×</button>
+          </div>
+          <div class="test-run-message" id="testRunMessage"></div>
+          <div class="test-run-details hidden" id="testRunDetails"></div>
+        </div>
+
+        <div class="evidence-chain-panel" id="evidenceChainPanel">
+          <!-- Populated dynamically via safe DOM APIs -->
+        </div>
+      </div>
+
+      <!-- Investigation Section -->
+      <div class="inspector-investigation-section">
+        <div class="investigation-action-row">
+          <button class="btn-action btn-accent btn-investigate-room" id="btnInvestigateRoom" title="Run diagnostic AI investigation on this module">
+            <span class="btn-investigate-icon">🔍</span>
+            <span id="btnInvestigateText">Investigate Room</span>
+          </button>
+          <button type="button" class="btn-action btn-reinspect-finding hidden" id="btnReinspectFinding" title="Re-inspect code against finding evidence to check whether changes occurred">
+            <span class="btn-reinspect-icon">🔄</span>
+            <span id="btnReinspectText">Re-inspect Finding</span>
+          </button>
+          <span class="investigation-status-pill hidden" id="investigationStatusPill"></span>
+        </div>
+
+        <div class="investigation-panel hidden" id="investigationPanel">
+          <!-- Populated dynamically via safe DOM APIs -->
+        </div>
+      </div>
     </div>
   </div>
 
@@ -190,14 +242,29 @@
             Cleo
           </span>
         </div>
-        <span class="version-pill" id="modeBadge">Offline Safe</span>
+        <div class="companions-top-actions">
+          <select id="explanationLevelSelect" class="level-select" title="Companion explanation depth">
+            <option value="beginner">Beginner</option>
+            <option value="intermediate" selected>Intermediate</option>
+            <option value="technical">Technical</option>
+          </select>
+          <button class="btn-action btn-clear-chat" id="btnClearChat" title="Clear conversation history">Clear</button>
+          <span class="version-pill" id="modeBadge">Offline Safe</span>
+        </div>
       </div>
 
       <div class="messages-thread" id="companionThread">
-        <div class="text-analyzing">Analyzing workspace architecture...</div>
+        <div class="text-analyzing" id="initialAnalyzingState">Analyzing workspace architecture...</div>
       </div>
 
       <div class="suggestions-row" id="suggestionsRow"></div>
+
+      <div class="chat-context-indicator" id="chatContextIndicator">
+        <span>Context:</span>
+        <span class="context-room-badge" id="contextRoomBadge">All Modules (Workspace)</span>
+        <span class="context-divider">·</span>
+        <span class="context-level-badge" id="contextLevelBadge">⚡ Intermediate</span>
+      </div>
 
       <div class="chat-input-bar">
         <input type="text" class="chat-input" id="companionInput" placeholder="Ask Barkley &amp; Cleo about this architecture..." />
@@ -209,16 +276,91 @@
           <input type="checkbox" id="consentCheckbox" />
           <span>Cloud AI Consent</span>
         </label>
+        <button class="btn-action btn-preview-payload" id="btnPreviewPayload" title="Inspect sanitized outbound AI context and privacy boundaries">🔍 Preview Payload</button>
         <button class="btn-action btn-config-key" id="configKeyBtn">Configure AI Key</button>
+      </div>
+
+      <!-- Prepared AI Context Preview Drawer -->
+      <div class="payload-preview-drawer hidden" id="payloadPreviewDrawer">
+        <div class="payload-preview-header">
+          <div class="payload-title-group">
+            <span class="payload-title">Prepared AI Context Preview</span>
+            <span class="privacy-badge" id="privacyBadge">Zero Raw Secrets</span>
+          </div>
+          <button class="btn-icon" id="btnClosePayloadPreview" title="Close Preview">✕</button>
+        </div>
+
+        <div class="payload-trust-notice" id="payloadTrustNotice">
+          <strong>Prepared-Context Preview (Offline Inspection):</strong> Displays the host-prepared adapter payload (<code class="inline-code">toChatRepoContext</code>). Previewing does not call any AI provider. <em>Disclosure:</em> Until Milestone P2-08 connects companions to this adapter, this preview does not represent what the legacy chatbot sends.
+        </div>
+
+        <div class="payload-state-box hidden" id="payloadLoadingState">
+          <span class="status-indicator-dot dot-pulsing"></span>
+          <span id="payloadLoadingText">Requesting prepared payload from host...</span>
+        </div>
+
+        <div class="payload-state-box payload-state-error hidden" id="payloadErrorState">
+          <span id="payloadErrorText">Host payload preview is unavailable or awaiting host integration.</span>
+        </div>
+
+        <div class="payload-state-box payload-state-empty hidden" id="payloadEmptyState">
+          <span id="payloadEmptyText">No prepared context returned by the host.</span>
+        </div>
+
+        <div class="payload-content-state hidden" id="payloadContentState">
+          <div class="payload-stats-grid">
+            <div class="payload-stat-card">
+              <span class="stat-card-label">Target Workspace</span>
+              <span class="stat-card-value" id="previewTargetWorkspace">—</span>
+            </div>
+            <div class="payload-stat-card">
+              <span class="stat-card-label">Files Discovered</span>
+              <span class="stat-card-value" id="previewDiscoveredCount">—</span>
+            </div>
+            <div class="payload-stat-card">
+              <span class="stat-card-label">Files Inspected</span>
+              <span class="stat-card-value" id="previewInspectedCount">—</span>
+            </div>
+            <div class="payload-stat-card">
+              <span class="stat-card-label">Sensitive Excluded</span>
+              <span class="stat-card-value" id="previewExcludedCount">—</span>
+            </div>
+          </div>
+
+          <div class="payload-json-section">
+            <div class="payload-section-header">
+              <span class="payload-section-label">Host-Prepared Payload Structure</span>
+              <span class="payload-provenance-tag" id="payloadProvenanceTag">Host Supplied</span>
+            </div>
+            <pre class="payload-code-view" id="payloadCodeView"></pre>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
   <!-- Panel 3: Architecture Graph -->
   <div id="panelGraph" class="graph-view-box hidden">
-    <div class="truth-banner">
+    <div class="graph-top-bar">
+      <div class="lens-selector-group">
+        <label for="architectureLensSelect" class="lens-label">Perspective:</label>
+        <select id="architectureLensSelect" class="lens-select" title="Switch architectural lens">
+          <option value="modules" selected>Modules Topology (Default)</option>
+          <option value="module_hierarchy">Module Hierarchy</option>
+          <option value="config_wiring">Config Wiring</option>
+          <option value="data_schema">Data &amp; Schemas</option>
+          <option value="state_transitions">State Transitions</option>
+          <option value="error_paths">Error Paths</option>
+        </select>
+      </div>
+      <span class="lens-status-pill" id="lensStatusPill">Modules</span>
+    </div>
+
+    <div class="truth-banner" id="graphTruthBanner">
       <strong>Static Module Topology:</strong> Derived from discovered workspace dependencies.
     </div>
+
+    <div class="lens-insufficient-notice hidden" id="lensInsufficientNotice"></div>
 
     <div class="svg-container">
       <div class="graph-controls-overlay">

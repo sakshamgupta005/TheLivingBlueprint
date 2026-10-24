@@ -70,12 +70,18 @@ ${ce.explanation ? `- **Evidence Assessment**: ${ce.explanation}` : ''}
 `;
   }
 
-  // Domain-specific prompt enhancement for whitespace title validation
+  // Domain-specific prompt enhancement for whitespace title validation.
+  // Only when the grounded finding actually cites the file this block names;
+  // otherwise unrelated repositories would get invented paths and functions.
+  const citesValidationFile =
+    finding.evidenceReferences.some((r) => r.path === 'src/tasks/validation.js') ||
+    finding.codeEvidence?.filePath === 'src/tasks/validation.js';
   const isWhitespaceTitleIssue =
-    finding.roomId === 'room-validation' ||
-    sanitizedExplanation.toLowerCase().includes('whitespace') ||
-    finding.title.toLowerCase().includes('whitespace') ||
-    finding.codeEvidence?.targetIdentifier === 'validateTaskTitle';
+    citesValidationFile &&
+    (finding.roomId === 'room-validation' ||
+      sanitizedExplanation.toLowerCase().includes('whitespace') ||
+      finding.title.toLowerCase().includes('whitespace') ||
+      finding.codeEvidence?.targetIdentifier === 'validateTaskTitle');
 
   let targetedGuidanceBlock = '';
   if (isWhitespaceTitleIssue) {
@@ -170,13 +176,13 @@ ${sanitizedNextStep}
    - Inspect the files referenced above before making any edits.
    - Confirm the failure mode or test gap in your local environment.
    - Do NOT assume the fix has already been applied.
-   - Ground all edits in the actual code: use verified identifiers (\`validateTaskTitle\`, \`title\`), not unverified or fabricated names.
+   - Ground all edits in the actual code: ${isWhitespaceTitleIssue ? 'use verified identifiers (`validateTaskTitle`, `title`)' : 'use identifiers verified in the referenced files'}, not unverified or fabricated names.
 2. **Scope of Changes**:
    - Focus strictly on addressing \`${finding.title}\`.
    - Preserve existing architectural patterns and avoid unrelated redesigns or refactoring.
 3. **Verification Steps**:
    - Run the relevant unit or integration tests for \`${finding.roomName}\` (\`npm test\`).
-   - If tests are missing or failing, inspect test assertions in \`test/createTask.test.js\`.
+   - If tests are missing or failing, inspect ${isWhitespaceTitleIssue ? 'test assertions in `test/createTask.test.js`' : 'the assertions in the relevant test files'}.
 4. **Acceptance Criteria**:
    - Implementation satisfies: ${sanitizedNextStep}
    - Existing and new tests pass without regressions.

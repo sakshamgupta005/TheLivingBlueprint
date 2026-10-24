@@ -3,7 +3,7 @@
 > **Visual software-architecture house and deterministic evidence engine for AI-generated code.**
 > Know what AI coding agents have actually built, what remains incomplete, and what the evidence proves.
 
-[![Test Suite](https://img.shields.io/badge/tests-376%20passing-brightgreen.svg)](#testing--verification)
+[![Test Suite](https://img.shields.io/badge/tests-627%20passing-brightgreen.svg)](#testing--verification)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue.svg)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-5.4-purple.svg)](https://vitejs.dev/)
 [![React](https://img.shields.io/badge/React-18.3-61dafb.svg)](https://react.dev/)
@@ -125,12 +125,14 @@ All LLM requests execute server-side with zero credential leakage:
 - **Secret Redaction**: Automatically scrubs API keys, tokens, and credentials prior to local persistence.
 - **Recent Project Switcher**: Easily switch between investigated repositories with isolated findings and room states.
 
-### 11. Embedded VS Code Extension
+### 11. Embedded VS Code Extension (v0.2.0)
 Located in [`vscode-extension/`](file:///c:/Users/rspma/Downloads/Velocity/vscode-extension):
-- **Workspace Architecture Discovery**: Automatically scans opened projects in VS Code.
-- **Interactive Graph Webview**: Embeds the topological dependency canvas with zoom and pan.
+- **Local Installation**: Install `living-blueprint-vscode-0.2.0.vsix` via `code --install-extension living-blueprint-vscode-0.2.0.vsix` or download directly from `/api/download/extension`.
+- **Workspace Architecture Discovery**: Automatically scans opened projects in VS Code with bounded safety and `.git`/`node_modules` pruning.
+- **Architecture Lenses & Interactive Canvas**: Overview, Flow, Components, and Status lenses embedded directly in a native webview.
+- **Investigation, Findings & Re-Inspection**: Deep room inspection, clickable line ranges, copy-ready repair prompts, and a dedicated re-inspection engine.
 - **Click-to-Line Navigation**: Clicking any node or file reference immediately opens the file at the exact line in VS Code.
-- **Secure SecretStorage**: Stores Gemini, Groq, and Cloudflare credentials in native VS Code secret storage.
+- **Secure SecretStorage & Per-Folder Consent**: Stores Gemini, Groq, and Cloudflare credentials in native VS Code secret storage; per-folder AI consent defaults to off.
 - **Offline by Default**: Operates 100% locally without sending code to external APIs unless explicitly authorized.
 
 ### 12. Built-in Demo Repository
@@ -247,11 +249,14 @@ curl -s http://localhost:3000/api/health
 
 ## Testing & Verification
 
-The project includes 376 automated unit and integration tests across 135 test suites, executing via Node's native test runner:
+The project includes 627 automated tests (445 web & root test runner tests + 182 VS Code extension tests) executing via Node's native test runner:
 
 ```bash
-# Run all automated tests
+# Run web and API automated tests (445 tests)
 npm test
+
+# Run VS Code extension automated tests (182 tests)
+cd vscode-extension && npm test
 ```
 
 ### Key Test Suites

@@ -2,11 +2,11 @@
   "name": "living-blueprint-vscode",
   "displayName": "The Living Blueprint",
   "description": "Discovered architecture, component status, and deterministic evidence for your workspace.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "the-living-blueprint",
   "repository": {
     "type": "git",
-    "url": "https://github.com/example/living-blueprint"
+    "url": "https://github.com/sakshamgupta005/Velocity"
   },
   "license": "MIT",
   "engines": {
@@ -20,6 +20,12 @@
   "activationEvents": [
     "onStartupFinished"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Read-only workspace scanning and architecture visualization are supported in restricted mode. AI companions, cloud API requests, and local test execution are disabled until the workspace is trusted."
+    }
+  },
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -64,8 +70,85 @@
         "title": "Living Blueprint: Configure AI Provider Credentials",
         "category": "Living Blueprint",
         "icon": "$(key)"
+      },
+      {
+        "command": "livingBlueprint.previewAiPayload",
+        "title": "Living Blueprint: Preview AI Payload",
+        "category": "Living Blueprint",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "livingBlueprint.runProjectTests",
+        "title": "Living Blueprint: Run Project Tests",
+        "category": "Living Blueprint",
+        "icon": "$(play)"
       }
     ],
+    "configuration": {
+      "title": "Living Blueprint",
+      "properties": {
+        "livingBlueprint.ai.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable AI companion discussions and architectural inferences. Disabled in untrusted workspaces."
+        },
+        "livingBlueprint.allowEnvCredentials": {
+          "type": "boolean",
+          "default": false,
+          "description": "Permit fallback reading of AI credentials from process environment variables if SecretStorage credentials are unset."
+        },
+        "livingBlueprint.extraIgnoreGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional glob patterns to exclude from workspace scanning and inspection."
+        },
+        "livingBlueprint.maxFilesToInspect": {
+          "type": "integer",
+          "default": 40,
+          "minimum": 1,
+          "maximum": 500,
+          "description": "Maximum number of high-priority files to inspect for dependencies and evidence."
+        },
+        "livingBlueprint.maxFileSizeKb": {
+          "type": "integer",
+          "default": 80,
+          "minimum": 1,
+          "maximum": 2048,
+          "description": "Maximum individual file size in kilobytes for source inspection."
+        },
+        "livingBlueprint.totalScanBudgetKb": {
+          "type": "integer",
+          "default": 200,
+          "minimum": 10,
+          "maximum": 10240,
+          "description": "Maximum total source scan budget in kilobytes across all inspected files."
+        },
+        "livingBlueprint.scan.maxDiscoveredFiles": {
+          "type": "integer",
+          "default": 5000,
+          "minimum": 100,
+          "maximum": 50000,
+          "description": "Maximum number of discovered workspace files before scan is marked truncated."
+        },
+        "livingBlueprint.scan.maxDepth": {
+          "type": "integer",
+          "default": 12,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Maximum directory traversal depth for file discovery."
+        },
+        "livingBlueprint.scan.discoveryTimeBudgetMs": {
+          "type": "integer",
+          "default": 3000,
+          "minimum": 500,
+          "maximum": 60000,
+          "description": "Maximum file discovery time budget in milliseconds before truncation."
+        }
+      }
+    },
     "menus": {
       "view/title": [
         {
@@ -83,14 +166,17 @@
   },
   "scripts": {
     "compile": "node build.js",
+    "compile:prod": "node build.js --production",
     "watch": "node build.js --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node --no-warnings --experimental-strip-types --test \"test/*.test.ts\"",
-    "package": "node build.js && vsce package --no-dependencies"
+    "test": "npm run compile:prod && node --no-warnings --experimental-strip-types --test \"test/*.test.ts\"",
+    "test:host": "node test/host/runTest.mjs",
+    "package": "node build.js --production && vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",
     "@types/vscode": "^1.82.0",
+    "@vscode/test-electron": "2.4.1",
     "@vscode/vsce": "3.2.1",
     "esbuild": "0.21.5",
     "typescript": "^5.6.3"

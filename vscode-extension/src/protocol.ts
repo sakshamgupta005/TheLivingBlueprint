@@ -14,7 +14,30 @@ export const ALLOWED_COMMANDS = [
   'configureApiKey',
   'openEditorPanel',
   'selectFolder',
+  'requestPayloadPreview',
+  'clearConversation',
+  'setExplanationLevel',
+  'investigateRoom',
+  'handoffRepairPrompt',
+  'selectArchitectureLens',
+  'requestEvidenceChain',
+  'runProjectTests',
+  'reinspectFinding',
 ] as const;
+
+/** Mirrors LENS_IDS in core/lenses.ts (existing GraphViewMode identifiers). */
+export const ARCHITECTURE_LENS_IDS = [
+  'modules',
+  'state_transitions',
+  'data_schema',
+  'config_wiring',
+  'error_paths',
+  'module_hierarchy',
+] as const;
+export type ArchitectureLensIdValue = (typeof ARCHITECTURE_LENS_IDS)[number];
+
+export const EXPLANATION_LEVELS = ['beginner', 'intermediate', 'technical'] as const;
+export type ExplanationLevelValue = (typeof EXPLANATION_LEVELS)[number];
 
 export type InboundCommand = (typeof ALLOWED_COMMANDS)[number];
 
@@ -32,6 +55,48 @@ export interface AskCompanionMessage {
   command: 'askCompanion';
   question: string;
   roomId?: string;
+  explanationLevel?: ExplanationLevelValue;
+}
+
+export interface ClearConversationMessage {
+  command: 'clearConversation';
+}
+
+export interface SetExplanationLevelMessage {
+  command: 'setExplanationLevel';
+  level: ExplanationLevelValue;
+}
+
+export interface SelectArchitectureLensMessage {
+  command: 'selectArchitectureLens';
+  lensId: ArchitectureLensIdValue;
+}
+
+export interface ReinspectFindingMessage {
+  command: 'reinspectFinding';
+  roomId: string;
+}
+
+export interface RunProjectTestsMessage {
+  command: 'runProjectTests';
+}
+
+export interface RequestEvidenceChainMessage {
+  command: 'requestEvidenceChain';
+  roomId: string;
+}
+
+export interface HandoffRepairPromptMessage {
+  command: 'handoffRepairPrompt';
+  roomId: string;
+  action: 'copy' | 'save';
+}
+
+export interface InvestigateRoomMessage {
+  command: 'investigateRoom';
+  roomId: string;
+  /** Re-run even if the shared engine has a cached finding for this snapshot. */
+  bypassCache?: boolean;
 }
 
 export interface SelectRoomMessage {
@@ -57,7 +122,20 @@ export interface SelectFolderMessage {
   folderPath: string;
 }
 
+export interface RequestPayloadPreviewMessage {
+  command: 'requestPayloadPreview';
+}
+
 export type ValidInboundMessage =
+  | RequestPayloadPreviewMessage
+  | ClearConversationMessage
+  | SetExplanationLevelMessage
+  | InvestigateRoomMessage
+  | HandoffRepairPromptMessage
+  | SelectArchitectureLensMessage
+  | RequestEvidenceChainMessage
+  | RunProjectTestsMessage
+  | ReinspectFindingMessage
   | OpenFileMessage
   | RefreshMessage
   | AskCompanionMessage
@@ -188,6 +266,104 @@ export function validateInboundMessage(
       return { valid: true, message: { command: 'configureApiKey' } };
     }
 
+    case 'requestPayloadPreview': {
+      return { valid: true, message: { command: 'requestPayloadPreview' } };
+    }
+
+    case 'clearConversation': {
+      return { valid: true, message: { command: 'clearConversation' } };
+    }
+
+    case 'setExplanationLevel': {
+      if (!EXPLANATION_LEVELS.includes(obj.level as ExplanationLevelValue)) {
+        rejectedMessageCounter++;
+        return { valid: false, reason: 'level must be beginner, intermediate or technical' };
+      }
+      return { valid: true, message: { command: 'setExplanationLevel', level: obj.level as ExplanationLevelValue } };
+    }
+
+    case 'investigateRoom': {
+      if (typeof obj.roomId !== 'string' || obj.roomId.trim().length === 0) {
+        rejectedMessageCounter++;
+        return { valid: false, reason: 'investigateRoom requires a non-empty string roomId' };
+      }
+      const roomId = obj.roomId.trim();
+      if (roomId.length > MAX_ROOM_ID_LENGTH) {
+        rejectedMessageCounter++;
+        return { valid: false, reason: `roomId exceeds max length of ${MAX_ROOM_ID_LENGTH}` };
+      }
+      // Without a snapshot there is no valid room to investigate.
+      const idSet = options.validRoomIds instanceof Set ? options.validRoomIds : new Set(options.validRoomIds ?? []);
+      if (!idSet.has(roomId)) {
+        rejectedMessageCounter++;
+        return { valid: false, reason: `Room ID '${roomId}' does not exist in active snapshot` };
+      }
+      if (obj.bypassCache !== undefined && typeof obj.bypassCache !== 'boolean') {
+        rejectedMessageCounter++;
+        return { valid: false, reason: 'bypassCache must be a boolean' };
+      }
+      return { valid: true, message: { command: 'investigateRoom', roomId, bypassCache: obj.bypassCache === true } };
+    }
+
+    case 'handoffRepairPrompt': {
+      if (typeof obj.roomId !== 'string' || obj.roomId.trim().length === 0 || obj.roomId.length > MAX_ROOM_ID_LENGTH) {
+        rejectedMessageCounter++;
+        return { valid: false, reason: 'handoffRepairPrompt requires a valid roomId' };
+      }
+      const roomId = obj.roomId.trim();
+      const idSet = options.validRoomIds instanceof Set ? options.validRoomIds : new Set(options.validRoomIds ?? []);
+      if (!idSet.has(roomId)) {
+        rejectedMessageCounter++;
+        return { valid: false, reason: `Room ID '${roomId}' does not exist in active snapshot` };
+      }
+      if (obj.action !== 'copy' && obj.action !== 'save') {
+        rejectedMessageCounter++;
+        return { valid: false, reason: "action must be 'copy' or 'save'" };
+      }
+      return { valid: true, message: { command: 'handoffRepairPrompt', roomId, action: obj.action } };
+    }
+
+    case 'reinspectFinding': {
+      if (typeof obj.roomId !== 'string' || obj.roomId.trim().length === 0 || obj.roomId.length > MAX_ROOM_ID_LENGTH) {
+        rejectedMessageCounter++;
+        return { valid: false, reason: 'reinspectFinding requires a valid roomId' };
+      }
+      const roomId = obj.roomId.trim();
+      const idSet = options.validRoomIds instanceof Set ? options.validRoomIds : new Set(options.validRoomIds ?? []);
+      if (!idSet.has(roomId)) {
+        rejectedMessageCounter++;
+        return { valid: false, reason: `Room ID '${roomId}' does not exist in active snapshot` };
+      }
+      return { valid: true, message: { command: 'reinspectFinding', roomId } };
+    }
+
+    case 'runProjectTests': {
+      // No fields: the host chooses the observed command; the webview can never supply one.
+      return { valid: true, message: { command: 'runProjectTests' } };
+    }
+
+    case 'selectArchitectureLens': {
+      if (!ARCHITECTURE_LENS_IDS.includes(obj.lensId as ArchitectureLensIdValue)) {
+        rejectedMessageCounter++;
+        return { valid: false, reason: 'Unknown architecture lens id' };
+      }
+      return { valid: true, message: { command: 'selectArchitectureLens', lensId: obj.lensId as ArchitectureLensIdValue } };
+    }
+
+    case 'requestEvidenceChain': {
+      if (typeof obj.roomId !== 'string' || obj.roomId.trim().length === 0 || obj.roomId.length > MAX_ROOM_ID_LENGTH) {
+        rejectedMessageCounter++;
+        return { valid: false, reason: 'requestEvidenceChain requires a valid roomId' };
+      }
+      const roomId = obj.roomId.trim();
+      const idSet = options.validRoomIds instanceof Set ? options.validRoomIds : new Set(options.validRoomIds ?? []);
+      if (!idSet.has(roomId)) {
+        rejectedMessageCounter++;
+        return { valid: false, reason: `Room ID '${roomId}' does not exist in active snapshot` };
+      }
+      return { valid: true, message: { command: 'requestEvidenceChain', roomId } };
+    }
+
     case 'toggleAiConsent': {
       if (typeof obj.enabled !== 'boolean') {
         rejectedMessageCounter++;
@@ -271,12 +447,22 @@ export function validateInboundMessage(
         }
       }
 
+      let explanationLevel: ExplanationLevelValue | undefined;
+      if (obj.explanationLevel !== undefined && obj.explanationLevel !== null) {
+        if (!EXPLANATION_LEVELS.includes(obj.explanationLevel as ExplanationLevelValue)) {
+          rejectedMessageCounter++;
+          return { valid: false, reason: 'explanationLevel must be beginner, intermediate or technical' };
+        }
+        explanationLevel = obj.explanationLevel as ExplanationLevelValue;
+      }
+
       return {
         valid: true,
         message: {
           command: 'askCompanion',
           question: obj.question.trim(),
-          roomId: parsedRoomId,
+          roomId: parsedRoomId || undefined,
+          explanationLevel,
         },
       };
     }

@@ -3,9 +3,11 @@ import assert from 'node:assert';
 import { handleChatApiRequest } from '../src/server/chatHandler.ts';
 import { handleInvestigateApiRequest } from '../src/server/investigateHandler.ts';
 import { handleHealthApiRequest } from '../src/server/healthHandler.ts';
+import { handleExtensionDownloadRequest, findExtensionVsix } from '../src/server/extensionDownloadHandler.ts';
 import chatApiHandler from '../api/chat.ts';
 import investigateApiHandler from '../api/investigate.ts';
 import healthApiHandler from '../api/health.ts';
+import downloadApiHandler from '../api/download.ts';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
@@ -13,24 +15,40 @@ interface MockResponse {
   statusCode: number;
   headers: Record<string, string>;
   body: string;
-  setHeader: (name: string, value: string) => void;
-  end: (chunk?: string) => void;
+  setHeader: (name: string, value: string | number) => void;
+  getHeader: (name: string) => string | undefined;
+  write: (chunk: unknown) => boolean;
+  end: (chunk?: unknown) => void;
+  on: (event: string, listener: (...args: any[]) => void) => any;
+  emit: (event: string, ...args: any[]) => boolean;
 }
 
 function createMockResponse(): MockResponse {
-  return {
+  const emitter = new EventEmitter();
+  const res: any = Object.assign(emitter, {
     statusCode: 200,
-    headers: {},
+    headers: {} as Record<string, string>,
     body: '',
-    setHeader(name: string, value: string) {
-      this.headers[name.toLowerCase()] = value;
+    setHeader(name: string, value: string | number) {
+      this.headers[name.toLowerCase()] = String(value);
     },
-    end(chunk?: string) {
+    getHeader(name: string) {
+      return this.headers[name.toLowerCase()];
+    },
+    write(chunk: unknown) {
       if (chunk) {
-        this.body += chunk;
+        this.body += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
       }
+      return true;
     },
-  };
+    end(chunk?: unknown) {
+      if (chunk) {
+        this.write(chunk);
+      }
+      this.emit('finish');
+    },
+  });
+  return res;
 }
 
 function createMockRequest(options: {
@@ -313,6 +331,67 @@ describe('Production API Routes & Serverless Adapters', () => {
       assert.strictEqual(regex.test('/api/health'), false, '/api/health must NOT rewrite to index.html');
       assert.strictEqual(regex.test('/overview'), true, '/overview must rewrite to index.html');
       assert.strictEqual(regex.test('/room/1'), true, '/room/1 must rewrite to index.html');
+    });
+  });
+
+  describe('Extension Download Route (/api/download/extension & api/download.ts)', () => {
+    it('rejects POST requests on download handler with 405 Method Not Allowed', async () => {
+      const req = createMockRequest({ method: 'POST' });
+      const res = createMockResponse();
+
+      await handleExtensionDownloadRequest(req, res as unknown as ServerResponse);
+      assert.strictEqual(res.statusCode, 405);
+      const data = JSON.parse(res.body);
+      assert.strictEqual(data.success, false);
+      assert.match(data.error, /Method not allowed/i);
+    });
+
+    it('rejects PUT or DELETE requests with 405 Method Not Allowed', async () => {
+      const reqPut = createMockRequest({ method: 'PUT' });
+      const resPut = createMockResponse();
+      await handleExtensionDownloadRequest(reqPut, resPut as unknown as ServerResponse);
+      assert.strictEqual(resPut.statusCode, 405);
+
+      const reqDelete = createMockRequest({ method: 'DELETE' });
+      const resDelete = createMockResponse();
+      await handleExtensionDownloadRequest(reqDelete, resDelete as unknown as ServerResponse);
+      assert.strictEqual(resDelete.statusCode, 405);
+    });
+
+    it('responds to HEAD requests with 200, correct octet-stream headers, and empty body', async () => {
+      const req = createMockRequest({ method: 'HEAD' });
+      const res = createMockResponse();
+
+      await handleExtensionDownloadRequest(req, res as unknown as ServerResponse);
+      assert.strictEqual(res.statusCode, 200);
+      assert.strictEqual(res.headers['content-type'], 'application/octet-stream');
+      assert.match(res.headers['content-disposition'], /^attachment; filename="living-blueprint-vscode-.*\.vsix"$/);
+      assert.ok(parseInt(res.headers['content-length'], 10) > 0, 'Content-Length should be positive');
+      assert.strictEqual(res.body, '', 'HEAD request must not send a response body');
+    });
+
+    it('findExtensionVsix resolves the available package dynamically without hardcoded versions', () => {
+      const resolved = findExtensionVsix();
+      assert.ok(resolved, 'findExtensionVsix should find at least one existing VSIX package');
+      assert.match(resolved, /living-blueprint-vscode-.*\.vsix$/);
+    });
+
+    it('findExtensionVsix resolves requested specific vsix package when specified in URL', () => {
+      const resolved = findExtensionVsix('/living-blueprint-vscode-0.1.0.vsix');
+      assert.ok(resolved, 'Should resolve specific 0.1.0 vsix');
+      assert.match(resolved, /living-blueprint-vscode-0\.1\.0\.vsix$/);
+    });
+
+    it('confirms api/download.ts serverless function delegates to handleExtensionDownloadRequest and configures maxDuration', async () => {
+      const req = createMockRequest({ method: 'HEAD' });
+      const res = createMockResponse();
+
+      await downloadApiHandler(req, res as unknown as ServerResponse);
+      assert.strictEqual(res.statusCode, 200);
+      assert.strictEqual(res.headers['content-type'], 'application/octet-stream');
+
+      const downloadModule = await import('../api/download.ts');
+      assert.strictEqual(downloadModule.maxDuration, 15);
     });
   });
 });

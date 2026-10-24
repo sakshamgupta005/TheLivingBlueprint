@@ -137,6 +137,20 @@ export function createWorkspaceSnapshot(
     writable: false,
     configurable: true,
   });
+  // Per-file SHA-256 of inspected content (P2-14 re-inspection); never serialized.
+  Object.defineProperty(snapshot, 'hostContentHashes', {
+    value: contentHashes,
+    enumerable: false,
+    writable: false,
+    configurable: true,
+  });
+  // Carry the host-only domain project (P2-13 local evidence); never serialized.
+  Object.defineProperty(snapshot, 'hostProject', {
+    value: (data as unknown as { hostProject?: unknown }).hostProject,
+    enumerable: false,
+    writable: false,
+    configurable: true,
+  });
 
   return snapshot;
 }
@@ -150,6 +164,11 @@ export function getSnapshotExcerpt(
 ): string | undefined {
   const excerpts = (snapshot as any).hostExcerpts as Map<string, string> | undefined;
   return excerpts?.get(filePath);
+}
+
+/** Host-only SHA-256 of each inspected file's full content, keyed by path. */
+export function getSnapshotContentHashes(snapshot: WorkspaceSnapshot): Map<string, string> {
+  return ((snapshot as any).hostContentHashes as Map<string, string>) ?? new Map();
 }
 
 /**

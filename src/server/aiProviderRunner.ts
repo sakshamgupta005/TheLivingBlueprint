@@ -90,7 +90,7 @@ export interface AiExecutionRequest {
 export interface AiExecutionSuccess {
   success: true;
   rawText: string;
-  providerUsed: 'gemini' | 'groq' | 'cloudflare';
+  providerUsed: 'gemini' | 'groq' | 'cloudflare' | 'omniroute';
   upstreamMs: number;
   fallbackMs?: number;
   promptTokens?: number;
@@ -228,7 +228,7 @@ export async function executeAiWithFallback(
   ].filter(Boolean) as string[];
 
   // Sequential order: Gemini first (if configured and valid), Groq second (if configured and valid), Cloudflare third
-  const providersToAttempt: Array<'gemini' | 'groq' | 'cloudflare'> = [];
+  const providersToAttempt: Array<'gemini' | 'groq' | 'cloudflare' | 'omniroute'> = [];
   if (configs.gemini.isConfigured && isValidModelIdentifier(configs.gemini.model)) {
     providersToAttempt.push('gemini');
   }
@@ -441,6 +441,25 @@ export async function executeAiWithFallback(
             errorData = await res.json();
           } catch {
             // fallback
+          }
+
+          // JSON mode rejects replies the model wrote as plain text (common for small talk),
+          // but Groq returns that text as `failed_generation`. Use it: the response validator
+          // already accepts plain-text replies, so the user gets the answer instead of an error.
+          const groqError = (errorData as { error?: { code?: string; failed_generation?: unknown } } | undefined)?.error;
+          if (
+            res.status === 400 &&
+            groqError?.code === 'json_validate_failed' &&
+            typeof groqError.failed_generation === 'string' &&
+            groqError.failed_generation.trim().length > 0
+          ) {
+            return {
+              success: true,
+              rawText: groqError.failed_generation,
+              providerUsed: 'groq',
+              upstreamMs: totalUpstreamMs,
+              fallbackMs,
+            };
           }
 
           const errorInfo = classifyGroqError(

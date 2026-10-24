@@ -221,7 +221,7 @@ export function getThinkingConfig(
   return { thinkingLevel: 'low' };
 }
 
-import { executeAiWithFallback } from './aiProviderRunner.ts';
+import { executeAiWithStrategy, type AiStrategyOptions } from './aiHedging.ts';
 
 export function getChatResponseSchema(includeDiagram: boolean, isFragment = false) {
   if (isFragment) {
@@ -339,7 +339,9 @@ export function getChatResponseSchema(includeDiagram: boolean, isFragment = fals
 export async function executeAiChat(
   request: ChatApiRequest,
   env: Record<string, string | undefined> = process.env,
-  fetchFn: typeof fetch = fetch
+  fetchFn: typeof fetch = fetch,
+  /** Optional: { strategy: 'hedged' } for fastest-wins across providers (default: sequential). */
+  strategy?: AiStrategyOptions
 ): Promise<ChatApiResponse> {
   const startTime = Date.now();
 
@@ -409,7 +411,7 @@ export async function executeAiChat(
   const includeDiagram = isDiagramIntentRequested(request);
   const chatResponseSchema = getChatResponseSchema(includeDiagram, request.isFragmentRequest);
 
-  const outcome = await executeAiWithFallback(
+  const outcome = await executeAiWithStrategy(
     {
       systemInstruction,
       messages: conversationContents,
@@ -417,11 +419,15 @@ export async function executeAiChat(
       maxOutputTokens: request.isFragmentRequest ? 500 : undefined,
       responseSchema: chatResponseSchema,
       feature: 'chat',
-      overallTimeoutMs: 20000,
-      perProviderTimeoutMs: 10000,
+      // Hard cap the user ever waits: 25s. The primary provider gets 15s (real answers with
+      // repository context regularly need >10s); the fallback gets whatever remains.
+      // Fast answers are unaffected: these are give-up limits, not delays.
+      overallTimeoutMs: 25000,
+      perProviderTimeoutMs: 15000,
     },
     env,
-    fetchFn
+    fetchFn,
+    strategy
   );
 
   if (!outcome.success) {

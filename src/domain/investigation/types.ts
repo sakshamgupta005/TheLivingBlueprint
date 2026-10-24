@@ -57,8 +57,8 @@ export interface RoomInvestigationFinding {
   companionMessages: CompanionReplyMessage[];
   generatedPrompt?: string;
   timing?: ExecutionTimingMetadata;
-  providerUsed?: 'gemini' | 'groq' | 'cloudflare';
-  provider?: 'gemini' | 'groq' | 'cloudflare';
+  providerUsed?: 'gemini' | 'groq' | 'cloudflare' | 'omniroute';
+  provider?: 'gemini' | 'groq' | 'cloudflare' | 'omniroute';
   fallbackUsed?: boolean;
   isCached?: boolean;
 }
@@ -103,7 +103,7 @@ export interface InvestigateApiResponse {
   code?: 'CONFIG_REQUIRED' | 'RATE_LIMITED' | 'PROVIDER_ERROR' | 'INVALID_REQUEST';
   errorInfo?: AiErrorInfo;
   timing?: ExecutionTimingMetadata;
-  providerUsed?: 'gemini' | 'groq' | 'cloudflare';
-  provider?: 'gemini' | 'groq' | 'cloudflare';
+  providerUsed?: 'gemini' | 'groq' | 'cloudflare' | 'omniroute';
+  provider?: 'gemini' | 'groq' | 'cloudflare' | 'omniroute';
   fallbackUsed?: boolean;
 }

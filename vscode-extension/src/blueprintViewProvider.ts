@@ -3,7 +3,13 @@ import * as path from 'path';
 import * as fs from 'fs';
 import type { WorkspaceBlueprintData } from './workspaceScanner.ts';
 import type { CompanionAnalysisResult, CompanionMessage } from './companionEngine.ts';
-import { validateInboundMessage } from './protocol.ts';
+import { validateInboundMessage, type ExplanationLevelValue, type ArchitectureLensIdValue } from './protocol.ts';
+
+export type AskCompanionHandler = (
+  question: string,
+  roomId?: string,
+  explanationLevel?: ExplanationLevelValue
+) => Promise<void>;
 import { resolveWorkspaceFile } from './pathResolver.ts';
 
 export class BlueprintViewProvider implements vscode.WebviewViewProvider {
@@ -20,22 +26,42 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
   private _latestFolders?: { folders: any[]; activeFolderPath?: string };
 
   private _onRefreshRequested?: () => void;
-  private _onAskCompanion?: (question: string) => Promise<void>;
+  private _onAskCompanion?: AskCompanionHandler;
   private _onConfigureApiKey?: () => Promise<void>;
   private _onToggleAiConsent?: (enabled: boolean) => Promise<void>;
   private _onOpenEditorRequested?: () => void;
   private _onSelectFolder?: (folderPath: string) => void;
+  private _onRequestPayloadPreview?: () => Promise<unknown>;
+  private _onRoomSelected?: (roomId: string | null) => void;
+  private _onClearConversation?: () => Promise<void>;
+  private _onSetExplanationLevel?: (level: ExplanationLevelValue) => Promise<void>;
+  private _onInvestigateRoom?: (roomId: string, bypassCache: boolean) => Promise<void>;
+  private _onHandoffRepairPrompt?: (roomId: string, action: 'copy' | 'save') => Promise<void>;
+  private _onSelectArchitectureLens?: (lensId: ArchitectureLensIdValue) => void;
+  private _onRequestEvidenceChain?: (roomId: string) => void;
+  private _onRunProjectTests?: () => Promise<void>;
+  private _onReinspectFinding?: (roomId: string) => Promise<void>;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
     private readonly _workspaceRoot?: string,
     handlers?: {
       onRefreshRequested?: () => void;
-      onAskCompanion?: (question: string) => Promise<void>;
+      onAskCompanion?: AskCompanionHandler;
       onConfigureApiKey?: () => Promise<void>;
       onToggleAiConsent?: (enabled: boolean) => Promise<void>;
       onOpenEditorRequested?: () => void;
       onSelectFolder?: (folderPath: string) => void;
+      onRequestPayloadPreview?: () => Promise<unknown>;
+      onRoomSelected?: (roomId: string | null) => void;
+      onClearConversation?: () => Promise<void>;
+      onSetExplanationLevel?: (level: ExplanationLevelValue) => Promise<void>;
+      onInvestigateRoom?: (roomId: string, bypassCache: boolean) => Promise<void>;
+      onHandoffRepairPrompt?: (roomId: string, action: 'copy' | 'save') => Promise<void>;
+      onSelectArchitectureLens?: (lensId: ArchitectureLensIdValue) => void;
+      onRequestEvidenceChain?: (roomId: string) => void;
+      onRunProjectTests?: () => Promise<void>;
+      onReinspectFinding?: (roomId: string) => Promise<void>;
     }
   ) {
     if (handlers) {
@@ -45,17 +71,43 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
       this._onToggleAiConsent = handlers.onToggleAiConsent;
       this._onOpenEditorRequested = handlers.onOpenEditorRequested;
       this._onSelectFolder = handlers.onSelectFolder;
+      this._onRequestPayloadPreview = handlers.onRequestPayloadPreview;
+      this._onRoomSelected = handlers.onRoomSelected;
+      this._onClearConversation = handlers.onClearConversation;
+      this._onSetExplanationLevel = handlers.onSetExplanationLevel;
+      this._onInvestigateRoom = handlers.onInvestigateRoom;
+      this._onHandoffRepairPrompt = handlers.onHandoffRepairPrompt;
+      this._onSelectArchitectureLens = handlers.onSelectArchitectureLens;
+      this._onRequestEvidenceChain = handlers.onRequestEvidenceChain;
+      this._onRunProjectTests = handlers.onRunProjectTests;
+      this._onReinspectFinding = handlers.onReinspectFinding;
     }
   }
 
-  public setSecurityState(hasApiKey: boolean, aiConsent: boolean) {
+  /** Posts a host message to every open Living Blueprint webview. */
+  public post(message: unknown) {
+    this._postToAll(message);
+  }
+
+  public setSecurityState(hasApiKey: boolean, aiConsent: boolean, isTrusted = true) {
     this._hasApiKey = hasApiKey;
     this._aiConsent = aiConsent;
-    this._postToAll({
-      type: 'securityState',
-      hasApiKey,
-      aiConsent,
-    });
+    this._isTrusted = isTrusted;
+    this._postToAll(this._securityMessage());
+  }
+
+  private _isTrusted = true;
+  /** Called after a webview (sidebar or editor panel) is created, so the host can replay its state. */
+  public onViewReady?: () => void;
+
+  private _securityMessage() {
+    return { type: 'securityState', hasApiKey: this._hasApiKey, aiConsent: this._aiConsent, isTrusted: this._isTrusted };
+  }
+
+  /** Replays state a newly opened view would otherwise miss until the next scan. */
+  private _replayHostState(webview: vscode.Webview) {
+    webview.postMessage(this._securityMessage());
+    this.onViewReady?.();
   }
 
   public resolveWebviewView(
@@ -82,6 +134,7 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
     if (this._latestFolders) {
       webviewView.webview.postMessage({ type: 'workspaceFolders', ...this._latestFolders });
     }
+    this._replayHostState(webviewView.webview);
   }
 
   public attachEditorPanel(panel: vscode.WebviewPanel) {
@@ -117,9 +170,11 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
     if (this._latestFolders) {
       panel.webview.postMessage({ type: 'workspaceFolders', ...this._latestFolders });
     }
+    this._replayHostState(panel.webview);
   }
 
   private _postToAll(message: unknown) {
+    this.testTap?.(message);
     if (this._view) {
       this._view.webview.postMessage(message);
     }
@@ -153,12 +208,28 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
   }
 
   private _attachMessageHandlers(webview: vscode.Webview) {
-    webview.onDidReceiveMessage(async (rawMessage) => {
+    webview.onDidReceiveMessage((rawMessage) => this.handleInboundMessage(rawMessage));
+  }
+
+  /** Optional observer of every host→webview message (read-only; used by host smoke tests). */
+  public testTap?: (message: unknown) => void;
+
+  /** The single validated entry point for webview messages (also driven by host smoke tests). */
+  public async handleInboundMessage(rawMessage: unknown): Promise<void> {
+    {
       const validRoomIds = this._latestData?.rooms.map((r) => r.id);
       const validation = validateInboundMessage(rawMessage, { validRoomIds });
 
       if (!validation.valid) {
         console.warn(`[Living Blueprint] Inbound message rejected: ${validation.reason}`);
+        // Tell the UI so a pending spinner or watchdog can stop instead of hanging.
+        const raw = rawMessage as { command?: unknown; roomId?: unknown } | null;
+        this._postToAll({
+          type: 'requestRejected',
+          command: typeof raw?.command === 'string' ? raw.command.slice(0, 64) : undefined,
+          roomId: typeof raw?.roomId === 'string' ? raw.roomId.slice(0, 256) : undefined,
+          reason: validation.reason,
+        });
         return;
       }
 
@@ -214,7 +285,11 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
           if (this._onAskCompanion) {
             this.setCompanionThinking(true);
             try {
-              await this._onAskCompanion(message.question);
+              await this._onAskCompanion(
+                message.question,
+                message.roomId ?? this._selectedRoomId ?? undefined,
+                message.explanationLevel
+              );
             } finally {
               this.setCompanionThinking(false);
             }
@@ -234,11 +309,45 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
           break;
         }
         case 'selectRoom': {
+          const changed = (message.roomId || null) !== this._selectedRoomId;
           this._selectedRoomId = message.roomId || null;
           this._postToAll({
             type: 'roomSelected',
             roomId: this._selectedRoomId,
           });
+          if (changed) this._onRoomSelected?.(this._selectedRoomId);
+          break;
+        }
+        case 'clearConversation': {
+          await this._onClearConversation?.();
+          break;
+        }
+        case 'setExplanationLevel': {
+          await this._onSetExplanationLevel?.(message.level);
+          break;
+        }
+        case 'investigateRoom': {
+          await this._onInvestigateRoom?.(message.roomId, message.bypassCache === true);
+          break;
+        }
+        case 'handoffRepairPrompt': {
+          await this._onHandoffRepairPrompt?.(message.roomId, message.action);
+          break;
+        }
+        case 'selectArchitectureLens': {
+          this._onSelectArchitectureLens?.(message.lensId);
+          break;
+        }
+        case 'requestEvidenceChain': {
+          this._onRequestEvidenceChain?.(message.roomId);
+          break;
+        }
+        case 'runProjectTests': {
+          await this._onRunProjectTests?.();
+          break;
+        }
+        case 'reinspectFinding': {
+          await this._onReinspectFinding?.(message.roomId);
           break;
         }
         case 'selectFolder': {
@@ -247,8 +356,15 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
           }
           break;
         }
+        case 'requestPayloadPreview': {
+          if (this._onRequestPayloadPreview) {
+            const payload = await this._onRequestPayloadPreview();
+            this._postToAll({ type: 'payloadPreview', payload });
+          }
+          break;
+        }
       }
-    });
+    }
   }
 
   public postScanState(state: any) {
@@ -276,8 +392,10 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
     if (companionAnalysis) {
       this._latestCompanionAnalysis = companionAnalysis;
     }
-    if (!this._selectedRoomId && data.rooms.length > 0) {
-      this._selectedRoomId = data.rooms[0].id;
+    // Reset a selection that no longer exists (e.g. after a folder switch); otherwise
+    // every room-scoped request would be rejected as a stale room id.
+    if (!this._selectedRoomId || !data.rooms.some((r) => r.id === this._selectedRoomId)) {
+      this._selectedRoomId = data.rooms[0]?.id ?? null;
     }
 
     this._postToAll({

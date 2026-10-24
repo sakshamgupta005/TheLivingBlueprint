@@ -527,6 +527,13 @@ export async function scanWorkspace(
     enumerable: false,
     writable: true,
   });
+  // Host-only domain project (requirements + evidence history) so local test-run
+  // evidence can be evaluated by the same status engine (P2-13).
+  Object.defineProperty(blueprintData, 'hostProject', {
+    value: mappedHouse.project,
+    enumerable: false,
+    writable: true,
+  });
 
   Object.defineProperty(blueprintData, 'hostContentHashes', {
     value: hostContentHashes,

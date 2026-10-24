@@ -15,14 +15,14 @@ export const MAX_CACHE_ENTRIES = 50;
 export interface ChatCacheEntry {
   response: ValidatedChatResponse;
   timing: ExecutionTimingMetadata;
-  providerUsed?: 'gemini' | 'groq' | 'cloudflare';
+  providerUsed?: 'gemini' | 'groq' | 'cloudflare' | 'omniroute';
   timestamp: number;
 }
 
 export interface InvestigationCacheEntry {
   finding: RoomInvestigationFinding;
   timing: ExecutionTimingMetadata;
-  providerUsed?: 'gemini' | 'groq' | 'cloudflare';
+  providerUsed?: 'gemini' | 'groq' | 'cloudflare' | 'omniroute';
   timestamp: number;
 }
 
