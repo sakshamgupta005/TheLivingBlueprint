@@ -29,3 +29,8 @@ dist-ssr
 .env
 .env.*
 !.env.example
+# Test fixtures intentionally contain fake .env files (P2-02/P2-03 secret-exclusion tests)
+!vscode-extension/test/fixtures/**/.env
+
+# Local one-off scripts (kept on disk, not pushed)
+scratch/

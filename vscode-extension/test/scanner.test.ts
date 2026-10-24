@@ -1,17 +1,28 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import * as path from 'node:path';
+import * as fs from 'node:fs';
 import { discoverWorkspaceFiles, scanWorkspace } from '../src/workspaceScanner.ts';
 
+const candidatePaths = [
+  path.resolve(process.cwd(), 'test', 'fixtures'),
+  path.resolve(process.cwd(), 'vscode-extension', 'test', 'fixtures'),
+];
+const fixturesDir = candidatePaths.find((p) => fs.existsSync(p)) || candidatePaths[0];
+
 describe('VS Code Extension - Workspace Scanner & Status Engine', () => {
-  const rootDir = path.resolve(process.cwd(), '..');
+  const expressFixture = path.join(fixturesDir, 'small-express');
+  const tsLibFixture = path.join(fixturesDir, 'ts-lib');
+  const emptyFixture = path.join(fixturesDir, 'empty');
 
   it('discovers workspace files while pruning ignored directories (.git, node_modules, etc.)', async () => {
-    const discovered = await discoverWorkspaceFiles(rootDir);
+    const discovered = await discoverWorkspaceFiles(expressFixture);
 
-    assert(discovered.length > 0, 'Should discover files in current workspace');
+    assert(discovered.length > 0, 'Should discover files in express fixture');
     assert(discovered.includes('package.json'), 'Should discover package.json');
-    assert(discovered.includes('src/App.tsx'), 'Should discover src/App.tsx');
+    assert(discovered.includes('src/server.js'), 'Should discover src/server.js');
+    assert(discovered.includes('src/routes/tasks.js'), 'Should discover src/routes/tasks.js');
+    assert(discovered.includes('test/tasks.test.js'), 'Should discover test/tasks.test.js');
 
     // Ensure ignored directories were never traversed
     for (const file of discovered) {
@@ -23,8 +34,8 @@ describe('VS Code Extension - Workspace Scanner & Status Engine', () => {
   });
 
   it('enforces bounded inspection budget and distinguishes discovered vs inspected files', async () => {
-    const maxFilesToInspect = 15;
-    const result = await scanWorkspace(rootDir, {
+    const maxFilesToInspect = 2;
+    const result = await scanWorkspace(expressFixture, {
       maxFilesToInspect,
       maxFileSizeBytes: 50 * 1024,
       totalScanBudgetBytes: 100 * 1024,
@@ -46,7 +57,7 @@ describe('VS Code Extension - Workspace Scanner & Status Engine', () => {
   });
 
   it('truthfully maps rooms without claiming tests passed when no execution evidence exists', async () => {
-    const result = await scanWorkspace(rootDir);
+    const result = await scanWorkspace(expressFixture);
 
     assert(result.rooms.length > 0, 'Should map rooms from workspace files');
 
@@ -58,14 +69,12 @@ describe('VS Code Extension - Workspace Scanner & Status Engine', () => {
     // In a workspace where test files exist but no live test execution records / check runs were fed in,
     // the status engine MUST NOT claim verified for rooms that only have source code or test files.
     const testRoom = result.rooms.find((r) => r.id === 'room-tests');
-    if (testRoom) {
-      // Test suite files detected in source code without test runner output result in implemented
-      assert.strictEqual(
-        testRoom.status,
-        'implemented',
-        'Automated test room without execution records must be implemented, not verified'
-      );
-    }
+    assert(testRoom, 'Expected room-tests to be mapped in express fixture');
+    assert.strictEqual(
+      testRoom.status,
+      'implemented',
+      'Automated test room without execution records must be implemented, not verified'
+    );
 
     // Overall summary must be populated
     assert(result.statusSummary);
@@ -73,7 +82,7 @@ describe('VS Code Extension - Workspace Scanner & Status Engine', () => {
   });
 
   it('infers infrastructure pillars and project evaluation', async () => {
-    const result = await scanWorkspace(rootDir);
+    const result = await scanWorkspace(expressFixture);
 
     assert(result.pillars.length > 0, 'Should infer infrastructure pillars');
     assert(result.projectEvaluation, 'Should provide projectEvaluation');
@@ -83,5 +92,29 @@ describe('VS Code Extension - Workspace Scanner & Status Engine', () => {
     assert(result.graph, 'Should generate CanvasGraph');
     assert(result.graph.nodes.length > 0, 'Graph should contain nodes');
     assert.strictEqual(result.graph.viewMode, 'modules');
+  });
+
+  it('handles empty fixture workspace safely', async () => {
+    const result = await scanWorkspace(emptyFixture);
+    assert.strictEqual(result.workspaceName, 'empty');
+    assert.strictEqual(result.discoveredFilesCount, 1);
+  });
+
+  it('scans TypeScript library fixture with auth and test rooms', async () => {
+    const result = await scanWorkspace(tsLibFixture);
+    assert.strictEqual(result.workspaceName, 'ts-lib');
+    const authRoom = result.rooms.find((r) => r.id === 'room-auth');
+    assert(authRoom, 'Expected room-auth to be mapped in ts-lib');
+    assert.strictEqual(authRoom.status, 'implemented');
+  });
+
+  it('optional self-scan smoke test on host repo when accessible', async () => {
+    const rootRepoDir = path.resolve(fixturesDir, '..', '..', '..');
+    const rootPackageJson = path.join(rootRepoDir, 'package.json');
+    if (!fs.existsSync(rootPackageJson)) {
+      return; // Cleanly skip if repository checkout layout differs
+    }
+    const result = await scanWorkspace(rootRepoDir, { maxFilesToInspect: 5 });
+    assert(result.discoveredFilesCount > 0, 'Self-scan should find files if root repo is present');
   });
 });

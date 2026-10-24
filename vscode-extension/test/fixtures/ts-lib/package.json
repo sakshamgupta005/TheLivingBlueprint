@@ -1,0 +1,12 @@
+{
+  "name": "ts-lib",
+  "version": "1.0.0",
+  "description": "TypeScript library fixture for testing",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "node --test test/auth.test.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import * as path from 'node:path';
+import * as fs from 'node:fs';
 import { scanWorkspace } from '../src/workspaceScanner.ts';
 import {
   generateAutomaticCompanionAnalysis,
@@ -8,22 +9,28 @@ import {
   answerCompanionQuery,
 } from '../src/companionEngine.ts';
 
+const candidatePaths = [
+  path.resolve(process.cwd(), 'test', 'fixtures'),
+  path.resolve(process.cwd(), 'vscode-extension', 'test', 'fixtures'),
+];
+const fixturesDir = candidatePaths.find((p) => fs.existsSync(p)) || candidatePaths[0];
+
 describe('VS Code Extension - Companions & Evidence Navigation', () => {
-  const rootDir = path.resolve(process.cwd(), '..');
+  const expressFixture = path.join(fixturesDir, 'small-express');
 
   it('extracts reliable file and line evidence references', () => {
-    const text = 'Check src/App.tsx:42 for main layout, and test/statusEngine.test.ts:35 for unit tests.';
+    const text = 'Check src/server.js:12 for main entry, and test/tasks.test.js:5 for unit tests.';
     const refs = extractEvidenceRefs(text, ['package.json']);
 
     assert.strictEqual(refs.length, 2);
-    assert.strictEqual(refs[0].file, 'src/App.tsx');
-    assert.strictEqual(refs[0].line, 42);
-    assert.strictEqual(refs[1].file, 'test/statusEngine.test.ts');
-    assert.strictEqual(refs[1].line, 35);
+    assert.strictEqual(refs[0].file, 'src/server.js');
+    assert.strictEqual(refs[0].line, 12);
+    assert.strictEqual(refs[1].file, 'test/tasks.test.js');
+    assert.strictEqual(refs[1].line, 5);
   });
 
   it('automatically analyzes workspace with Barkley and Cleo grounded in current scan', async () => {
-    const data = await scanWorkspace(rootDir);
+    const data = await scanWorkspace(expressFixture);
     const analysis = generateAutomaticCompanionAnalysis(data);
 
     assert(analysis.messages.length >= 1, 'Should generate at least Barkley message');
@@ -78,7 +85,7 @@ describe('VS Code Extension - Companions & Evidence Navigation', () => {
   });
 
   it('answers companion queries grounded in local workspace data without sending external network requests', async () => {
-    const data = await scanWorkspace(rootDir);
+    const data = await scanWorkspace(expressFixture);
     const replies = await answerCompanionQuery(
       'What tests are missing verification?',
       data,

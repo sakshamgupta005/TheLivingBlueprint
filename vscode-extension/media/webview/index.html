@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}}; script-src 'nonce-{{nonce}}';">
+  <link rel="stylesheet" href="{{styleUri}}">
+  <title>The Living Blueprint</title>
+</head>
+<body>
+  <!-- Header matching the website -->
+  <header class="app-header">
+    <div class="brand-title-row">
+      <div class="brand-left">
+        <span class="brand-name">The Living Blueprint</span>
+        <span class="version-pill">v0.15.0 · Living Blueprint</span>
+      </div>
+      <div class="header-actions">
+        <button class="btn-action btn-accent" id="btnOpenCanvas" title="Open Full Canvas Editor Tab">
+          ⛶ Full Canvas
+        </button>
+        <button class="btn-action" id="refreshBtn" title="Rescan Workspace">
+          ↻ Rescan
+        </button>
+      </div>
+    </div>
+    <p class="brand-purpose">
+      Evidence-backed architecture verification for AI coding agent projects
+    </p>
+    <div class="header-status-row">
+      <div class="status-badge" id="headerStatusBadge">
+        <span class="status-indicator-dot"></span>
+        <span id="headerStatusText">Workspace Discovered</span>
+      </div>
+      <span id="scanTimestamp" class="scan-timestamp"></span>
+    </div>
+    <div class="scanning-indicator" id="scanningIndicator">
+      Scanning workspace architecture &amp; evaluating evidence...
+    </div>
+    <div id="scanStateBanner" class="scan-state-banner"></div>
+    <select id="folderSelect" class="folder-select"></select>
+  </header>
+
+  <!-- Navigation View Tabs -->
+  <div class="view-tabs">
+    <button class="tab-btn active" id="tabHouse">🏠 3D Isometric House</button>
+    <button class="tab-btn" id="tabCompanions">🐾 Barkley &amp; Cleo</button>
+    <button class="tab-btn" id="tabGraph">🕸 Architecture Graph</button>
+    <button class="tab-btn" id="tabLedger">📋 Room Ledger</button>
+  </div>
+
+  <!-- Metrics Bar -->
+  <div class="metrics-bar">
+    <div class="metrics-stats">
+      <span class="stat-item"><strong id="discoveredCount">-</strong> Files Discovered</span>
+      <span class="stat-item"><strong id="inspectedCount">-</strong> Files Inspected</span>
+    </div>
+    <div class="pills-container" id="summaryPills"></div>
+  </div>
+
+  <!-- Panel 1: 3D Isometric House Canvas -->
+  <div id="panelHouse">
+    <div class="house-canvas-wrapper">
+      <div class="house-toolbar">
+        <span class="canvas-title">Interactive Architectural Model</span>
+        <div class="zoom-controls">
+          <button class="zoom-btn" id="houseZoomIn" title="Zoom In">+</button>
+          <button class="zoom-btn" id="houseZoomOut" title="Zoom Out">−</button>
+          <button class="zoom-btn" id="houseZoomReset" title="Reset Camera">⟲</button>
+        </div>
+      </div>
+
+      <div class="isometric-svg-container">
+        <svg
+          id="isometricSvg"
+          viewBox="0 0 900 640"
+          class="isometric-svg"
+          role="img"
+          aria-label="Interactive Software Architecture House"
+        >
+          <defs>
+            <pattern
+              id="construction-stripe"
+              width="12"
+              height="12"
+              patternUnits="userSpaceOnUse"
+              patternTransform="rotate(45)"
+            >
+              <line x1="0" y1="0" x2="0" y2="12" stroke="#9E7A3E" stroke-width="3" opacity="0.4" />
+            </pattern>
+            <filter id="soft-shadow" x="-10%" y="-10%" width="130%" height="130%">
+              <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#000000" floodOpacity="0.4" />
+            </filter>
+          </defs>
+
+          <g id="houseTransformGroup">
+            <!-- Bedrock Pillars -->
+            <g id="pillarsLayer" class="structural-pillars"></g>
+
+            <!-- Foundation Base Slab -->
+            <g id="foundationLayer" class="foundation-slab"></g>
+
+            <!-- Architectural Room Cubes -->
+            <g id="roomsLayer" class="rooms-layer"></g>
+
+            <!-- Translucent Roof Canopy & Trusses -->
+            <g id="roofLayer" class="roof-structure" opacity="0.85" pointer-events="none"></g>
+          </g>
+        </svg>
+      </div>
+    </div>
+
+    <!-- Room Inspector Drawer -->
+    <div class="inspector-drawer" id="roomInspectorDrawer">
+      <div class="inspector-header">
+        <div class="inspector-title">
+          <span id="inspectorRoomName">Select a room to inspect</span>
+          <span class="status-pill" id="inspectorRoomPill"></span>
+        </div>
+        <span class="inspector-layer" id="inspectorRoomLayer"></span>
+      </div>
+      <div class="inspector-desc" id="inspectorRoomDesc">
+        Click any 3D room above or in the list to inspect verified boundaries, source files, and dependencies.
+      </div>
+      <div class="inspector-evidence hidden" id="inspectorRoomEvidence"></div>
+      <div>
+        <div class="files-list-title">Associated Source Files (Click to Open)</div>
+        <div class="evidence-files-list" id="inspectorRoomFiles">
+          <span class="text-empty-hint">None listed</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel 2: Companions (Barkley & Cleo) -->
+  <div id="panelCompanions" class="hidden">
+    <div class="truth-banner">
+      <strong>Grounded Companions:</strong> Barkley explains architectural foundations; Cleo audits evidence gaps. Offline-safe local analysis by default.
+    </div>
+    <div class="companions-box">
+      <div class="companions-top">
+        <div class="companions-brand">
+          <span class="companion-chip">
+            <svg viewBox="0 0 16 16" width="18" height="18" class="pixel-avatar-svg">
+              <rect x="3" y="1" width="3" height="4" fill="#4A2E1E" />
+              <rect x="4" y="2" width="1" height="2" fill="#E2873A" />
+              <rect x="10" y="1" width="3" height="4" fill="#4A2E1E" />
+              <rect x="11" y="2" width="1" height="2" fill="#E2873A" />
+              <rect x="3" y="4" width="10" height="7" fill="#C48E58" />
+              <rect x="4" y="4" width="8" height="6" fill="#E2873A" />
+              <rect x="7" y="5" width="2" height="2" fill="#FBE9CF" />
+              <rect x="4" y="6" width="2" height="2" fill="#22150F" />
+              <rect x="5" y="6" width="1" height="1" fill="#FFFFFF" />
+              <rect x="10" y="6" width="2" height="2" fill="#22150F" />
+              <rect x="10" y="6" width="1" height="1" fill="#FFFFFF" />
+              <rect x="5" y="8" width="6" height="4" fill="#FBE9CF" />
+              <rect x="7" y="8" width="2" height="2" fill="#1A0F0B" />
+              <rect x="7" y="10" width="2" height="1" fill="#C46C2C" />
+              <rect x="4" y="11" width="8" height="4" fill="#C48E58" />
+              <rect x="6" y="11" width="4" height="4" fill="#FBE9CF" />
+              <rect x="4" y="14" width="2" height="1" fill="#E2C9A6" />
+              <rect x="10" y="14" width="2" height="1" fill="#E2C9A6" />
+              <rect x="1" y="10" width="2" height="3" fill="#E2873A" />
+            </svg>
+            Barkley
+          </span>
+          <span>&amp;</span>
+          <span class="companion-chip">
+            <svg viewBox="0 0 16 16" width="18" height="18" class="pixel-avatar-svg">
+              <rect x="3" y="1" width="2" height="4" fill="#545B6B" />
+              <rect x="4" y="2" width="1" height="2" fill="#F08D9A" />
+              <rect x="11" y="1" width="2" height="4" fill="#545B6B" />
+              <rect x="11" y="2" width="1" height="2" fill="#F08D9A" />
+              <rect x="3" y="4" width="10" height="7" fill="#767E8F" />
+              <rect x="4" y="4" width="8" height="6" fill="#8B909A" />
+              <rect x="4" y="6" width="2" height="1" fill="#1B1C22" />
+              <rect x="4" y="7" width="2" height="1" fill="#F5C542" />
+              <rect x="10" y="6" width="2" height="1" fill="#1B1C22" />
+              <rect x="10" y="7" width="2" height="1" fill="#F5C542" />
+              <rect x="6" y="8" width="4" height="3" fill="#D9D4CC" />
+              <rect x="7" y="8" width="2" height="1" fill="#E07A86" />
+              <rect x="2" y="8" width="2" height="1" fill="#D9D4CC" />
+              <rect x="12" y="8" width="2" height="1" fill="#D9D4CC" />
+              <rect x="4" y="11" width="8" height="4" fill="#767E8F" />
+              <rect x="6" y="11" width="4" height="3" fill="#D9D4CC" />
+              <rect x="4" y="14" width="2" height="1" fill="#D9D4CC" />
+              <rect x="10" y="14" width="2" height="1" fill="#D9D4CC" />
+              <rect x="12" y="11" width="2" height="4" fill="#545B6B" />
+            </svg>
+            Cleo
+          </span>
+        </div>
+        <span class="version-pill" id="modeBadge">Offline Safe</span>
+      </div>
+
+      <div class="messages-thread" id="companionThread">
+        <div class="text-analyzing">Analyzing workspace architecture...</div>
+      </div>
+
+      <div class="suggestions-row" id="suggestionsRow"></div>
+
+      <div class="chat-input-bar">
+        <input type="text" class="chat-input" id="companionInput" placeholder="Ask Barkley &amp; Cleo about this architecture..." />
+        <button class="btn-action btn-accent" id="sendBtn">Ask</button>
+      </div>
+
+      <div class="companion-footer">
+        <label class="ai-consent-label" title="When enabled, queries consult configured AI keys. Source code is never sent without consent.">
+          <input type="checkbox" id="consentCheckbox" />
+          <span>Cloud AI Consent</span>
+        </label>
+        <button class="btn-action btn-config-key" id="configKeyBtn">Configure AI Key</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel 3: Architecture Graph -->
+  <div id="panelGraph" class="graph-view-box hidden">
+    <div class="truth-banner">
+      <strong>Static Module Topology:</strong> Derived from discovered workspace dependencies.
+    </div>
+
+    <div class="svg-container">
+      <div class="graph-controls-overlay">
+        <button class="zoom-btn" id="btnZoomIn" title="Zoom In">+</button>
+        <button class="zoom-btn" id="btnZoomOut" title="Zoom Out">−</button>
+        <button class="zoom-btn" id="btnZoomReset" title="Reset Fit">⟲</button>
+      </div>
+      <svg class="svg-canvas" id="graphSvg" viewBox="0 0 800 600">
+        <defs>
+          <marker id="graphArrow" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto">
+            <polygon points="0 0, 8 3.5, 0 7" fill="rgba(208,199,193,0.4)" />
+          </marker>
+        </defs>
+        <g id="svgViewport">
+          <g id="edgesLayer"></g>
+          <g id="nodesLayer"></g>
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  <!-- Panel 4: Room Ledger -->
+  <div id="panelLedger" class="hidden">
+    <div class="truth-banner">
+      <strong>Deterministic Status Engine:</strong> Verified requires executed test artifacts; discovered code produces Implemented.
+    </div>
+    <div class="ledger-list" id="ledgerList"></div>
+  </div>
+
+  <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
+</body>
+</html>

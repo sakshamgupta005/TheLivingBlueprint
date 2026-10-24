@@ -10,7 +10,7 @@
   },
   "license": "MIT",
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.82.0"
   },
   "categories": [
     "Visualization",
@@ -85,12 +85,14 @@
     "compile": "node build.js",
     "watch": "node build.js --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node --no-warnings --experimental-strip-types --test test/scanner.test.ts test/companion.test.ts",
-    "package": "node build.js && npx @vscode/vsce package --no-dependencies"
+    "test": "node --no-warnings --experimental-strip-types --test \"test/*.test.ts\"",
+    "package": "node build.js && vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",
-    "@types/vscode": "^1.80.0",
+    "@types/vscode": "^1.82.0",
+    "@vscode/vsce": "3.2.1",
+    "esbuild": "0.21.5",
     "typescript": "^5.6.3"
   }
 }

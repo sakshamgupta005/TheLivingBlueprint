@@ -10,7 +10,9 @@
     "noEmit": true,
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
-    "strictNullChecks": true
+    "strict": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedParameters": true
   },
   "include": ["src/**/*", "test/**/*"]
 }

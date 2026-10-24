@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { BlueprintViewProvider } from './blueprintViewProvider.ts';
 import { scanWorkspace, type WorkspaceBlueprintData } from './workspaceScanner.ts';
 import {
@@ -6,6 +7,12 @@ import {
   answerCompanionQuery,
   type CompanionAnalysisResult,
 } from './companionEngine.ts';
+import {
+  ScanController,
+  type WorkspaceFolderInfo,
+  type ScanState,
+} from './scanController.ts';
+import { shouldIgnorePath, isSensitivePath } from './scanFilters.ts';
 
 const SECRET_GEMINI_KEY = 'livingBlueprint.geminiApiKey';
 const SECRET_GROQ_KEY = 'livingBlueprint.groqApiKey';
@@ -13,14 +20,11 @@ const SECRET_CLOUDFLARE_TOKEN = 'livingBlueprint.cloudflareToken';
 const SECRET_CLOUDFLARE_ACCOUNT = 'livingBlueprint.cloudflareAccount';
 const STATE_AI_CONSENT = 'livingBlueprint.aiConsent';
 
-let debounceTimer: NodeJS.Timeout | undefined;
+let globalScanController: ScanController | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
-  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-  const workspaceRoot = workspaceFolder ? workspaceFolder.uri.fsPath : undefined;
-
-  let isScanning = false;
   let latestData: WorkspaceBlueprintData | null = null;
+  const initialFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
   // Retrieve current security & consent state from SecretStorage / globalState
   const getApiKeys = async () => {
@@ -53,39 +57,45 @@ export async function activate(context: vscode.ExtensionContext) {
     provider.setSecurityState(hasKey, enabled);
   };
 
-  const performScan = async () => {
-    if (!workspaceRoot || isScanning) {
-      return;
+  // Collect dirty buffers from open documents without leaking sensitive files
+  const getDirtyBuffersForFolder = (folderPath: string): Map<string, string> => {
+    const dirtyMap = new Map<string, string>();
+    for (const doc of vscode.workspace.textDocuments) {
+      if (doc.isDirty && doc.uri.scheme === 'file') {
+        const filePath = doc.uri.fsPath;
+        const relPath = path.relative(folderPath, filePath).replace(/\\/g, '/');
+        if (!relPath.startsWith('..') && !path.isAbsolute(relPath)) {
+          // Do not read or include dirty buffers for sensitive files
+          if (!isSensitivePath(relPath).sensitive) {
+            dirtyMap.set(relPath, doc.getText());
+          }
+        }
+      }
     }
-    try {
-      isScanning = true;
-      provider.setScanning(true);
-      const blueprintData = await scanWorkspace(workspaceRoot);
-      latestData = blueprintData;
-
-      // Automatically generate grounded companion analysis from discovered workspace architecture
-      const companionAnalysis: CompanionAnalysisResult =
-        generateAutomaticCompanionAnalysis(blueprintData);
-
-      const keys = await getApiKeys();
-      const hasKey = Boolean(keys.geminiKey || keys.groqKey || keys.cloudflareToken);
-      provider.setSecurityState(hasKey, getAiConsent());
-      provider.updateData(blueprintData, companionAnalysis);
-    } catch (err) {
-      console.error('[Living Blueprint] Scan failure:', err);
-    } finally {
-      isScanning = false;
-      provider.setScanning(false);
-    }
+    return dirtyMap;
   };
 
-  const scheduleDebouncedScan = () => {
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
+  let editorPanel: vscode.WebviewPanel | undefined;
+
+  const openEditorPanel = () => {
+    if (editorPanel) {
+      editorPanel.reveal(vscode.ViewColumn.One);
+      return;
     }
-    debounceTimer = setTimeout(() => {
-      performScan();
-    }, 400);
+    editorPanel = vscode.window.createWebviewPanel(
+      'livingBlueprint.editorCanvas',
+      'The Living Blueprint',
+      vscode.ViewColumn.One,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [context.extensionUri],
+      }
+    );
+    provider.attachEditorPanel(editorPanel);
+    editorPanel.onDidDispose(() => {
+      editorPanel = undefined;
+    });
   };
 
   // Companion Q&A handler
@@ -153,36 +163,55 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   };
 
-  let editorPanel: vscode.WebviewPanel | undefined;
-
-  const openEditorPanel = () => {
-    if (editorPanel) {
-      editorPanel.reveal(vscode.ViewColumn.One);
-      return;
-    }
-    editorPanel = vscode.window.createWebviewPanel(
-      'livingBlueprint.editorCanvas',
-      'The Living Blueprint',
-      vscode.ViewColumn.One,
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        localResourceRoots: [context.extensionUri],
-      }
-    );
-    provider.attachEditorPanel(editorPanel);
-    editorPanel.onDidDispose(() => {
-      editorPanel = undefined;
-    });
-  };
-
-  const provider = new BlueprintViewProvider(context.extensionUri, workspaceRoot, {
-    onRefreshRequested: () => performScan(),
+  const provider = new BlueprintViewProvider(context.extensionUri, initialFolder, {
+    onRefreshRequested: () => scanController.requestScan(true),
     onAskCompanion: handleAskCompanion,
     onConfigureApiKey: handleConfigureApiKey,
     onToggleAiConsent: setAiConsent,
     onOpenEditorRequested: openEditorPanel,
+    onSelectFolder: (folderPath: string) => {
+      const folderInfos = scanController.getFolders();
+      if (!folderInfos.some((f) => f.uri.fsPath === folderPath)) {
+        return;
+      }
+      scanController.setActiveFolder(folderPath);
+      provider.postWorkspaceFolders(folderInfos, folderPath);
+    },
   });
+
+  const scanController = new ScanController({
+    debounceMs: 400,
+    getDirtyBuffers: getDirtyBuffersForFolder,
+    scanFn: async (folderPath, signal, dirtyBuffers) => {
+      return scanWorkspace(folderPath, { signal, dirtyBuffers });
+    },
+    onStateChange: (state: ScanState) => {
+      provider.postScanState(state);
+      provider.setScanning(state.status === 'scanning');
+    },
+    onScanComplete: async (_folderPath, blueprintData, isStale) => {
+      latestData = blueprintData;
+
+      const companionAnalysis: CompanionAnalysisResult =
+        generateAutomaticCompanionAnalysis(blueprintData);
+
+      const keys = await getApiKeys();
+      const hasKey = Boolean(keys.geminiKey || keys.groqKey || keys.cloudflareToken);
+      provider.setSecurityState(hasKey, getAiConsent());
+      provider.updateData(blueprintData, companionAnalysis);
+
+      if (isStale) {
+        provider.postScanState({
+          status: 'error',
+          message: 'Displaying previous architecture snapshot (stale).',
+          isStale: true,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    },
+  });
+
+  globalScanController = scanController;
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(BlueprintViewProvider.viewType, provider, {
@@ -198,7 +227,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('livingBlueprint.refresh', () => {
-      performScan();
+      scanController.requestScan(true);
     })
   );
 
@@ -214,37 +243,61 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Set up debounced file watcher for automatic workspace updates
-  if (workspaceRoot) {
-    const watcher = vscode.workspace.createFileSystemWatcher('**/*');
+  // Set up per-workspace-folder file watchers with RelativePattern and unified filter
+  const activeWatchers: vscode.FileSystemWatcher[] = [];
 
-    const isIgnored = (uri: vscode.Uri) => {
-      const p = uri.fsPath.replace(/\\/g, '/');
-      return /(?:^|\/)(?:\.git|node_modules|dist|build|\.next|\.nuxt|vendor|coverage|\.vscode|out|target|\.turbo)\//.test(
-        p
-      );
-    };
+  const setupFolderWatchers = () => {
+    // Dispose previous watchers
+    for (const w of activeWatchers) {
+      w.dispose();
+    }
+    activeWatchers.length = 0;
 
-    watcher.onDidChange((uri) => {
-      if (!isIgnored(uri)) scheduleDebouncedScan();
-    });
-    watcher.onDidCreate((uri) => {
-      if (!isIgnored(uri)) scheduleDebouncedScan();
-    });
-    watcher.onDidDelete((uri) => {
-      if (!isIgnored(uri)) scheduleDebouncedScan();
-    });
+    const folders = vscode.workspace.workspaceFolders || [];
+    const folderInfos: WorkspaceFolderInfo[] = folders.map((f, idx) => ({
+      uri: { fsPath: f.uri.fsPath },
+      name: f.name,
+      index: idx,
+    }));
 
-    context.subscriptions.push(watcher);
+    for (const folder of folders) {
+      const pattern = new vscode.RelativePattern(folder, '**/*');
+      const watcher = vscode.workspace.createFileSystemWatcher(pattern);
 
-    // Initial automatic scan & companion analysis on activation
-    performScan();
-  }
+      const handleEvent = (uri: vscode.Uri) => {
+        const relPath = path.relative(folder.uri.fsPath, uri.fsPath).replace(/\\/g, '/');
+        // Reuse exact same ignore predicate as scanner
+        const decision = shouldIgnorePath(relPath, false);
+        if (!decision.ignored) {
+          scanController.requestScan(false, folder.uri.fsPath);
+        }
+      };
+
+      watcher.onDidChange(handleEvent);
+      watcher.onDidCreate(handleEvent);
+      watcher.onDidDelete(handleEvent);
+
+      activeWatchers.push(watcher);
+      context.subscriptions.push(watcher);
+    }
+
+    scanController.setFolders(folderInfos);
+    provider.postWorkspaceFolders(folderInfos, scanController.getActiveFolderPath());
+  };
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      setupFolderWatchers();
+    })
+  );
+
+  // Initial folder setup and discovery
+  setupFolderWatchers();
 }
 
 export function deactivate() {
-  if (debounceTimer) {
-    clearTimeout(debounceTimer);
-    debounceTimer = undefined;
+  if (globalScanController) {
+    globalScanController.dispose();
+    globalScanController = undefined;
   }
 }

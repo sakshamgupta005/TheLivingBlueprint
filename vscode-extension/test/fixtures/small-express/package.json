@@ -1,0 +1,12 @@
+{
+  "name": "small-express",
+  "version": "1.0.0",
+  "description": "Small Express fixture for testing",
+  "main": "src/server.js",
+  "scripts": {
+    "test": "node --test test/tasks.test.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

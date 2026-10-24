@@ -1,5 +1,8 @@
 const esbuild = require('esbuild');
 
+const path = require('path');
+const fs = require('fs');
+
 const isWatch = process.argv.includes('--watch');
 
 const buildOptions = {
@@ -14,7 +17,23 @@ const buildOptions = {
   logLevel: 'info',
 };
 
+function verifyWebviewAssets() {
+  const requiredFiles = [
+    'media/webview/index.html',
+    'media/webview/styles.css',
+    'media/webview/main.js',
+  ];
+  for (const rel of requiredFiles) {
+    const full = path.join(__dirname, rel);
+    if (!fs.existsSync(full)) {
+      throw new Error(`Missing required webview asset: ${rel}`);
+    }
+  }
+}
+
 async function run() {
+  verifyWebviewAssets();
+
   if (isWatch) {
     const ctx = await esbuild.context(buildOptions);
     await ctx.watch();
