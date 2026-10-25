@@ -1,3 +1,4 @@
+import type { ResilienceInvestigationContext } from '../domain/resilience/types.ts';
 /**
  * Types for Server-Side AI Companions and Provider Integration
  */
@@ -69,6 +70,8 @@ export interface ValidatedChatResponse {
 
 export interface ChatApiRequest {
   message: string;
+  /** Optional deterministic resilience-engine findings (Live Risk view). */
+  resilienceContext?: ResilienceInvestigationContext;
   explanationLevel?: ExplanationLevel;
   history?: Array<{ role: 'user' | 'assistant'; text: string; speaker?: CompanionSpeaker }>;
   selectedRoomId?: string;

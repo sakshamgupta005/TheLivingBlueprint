@@ -1,4 +1,5 @@
 import type { ChatApiRequest } from './types.ts';
+import { formatResilienceFindings, resilienceContextKey } from '../domain/resilience/index.ts';
 import { buildRepositoryKnowledgeBase, retrieveKnowledge } from '../domain/repositoryKnowledge/index.ts';
 
 const MAX_PROMPT_CHARS = 24000;
@@ -483,11 +484,24 @@ export function buildSystemPrompt(request: ChatApiRequest): string {
   const findingsCount = rawFindings && typeof rawFindings === 'object' ? Object.keys(rawFindings).length : 0;
 
   const cleanMsgKey = (request.message || '').trim().toLowerCase().slice(0, 80);
+  const rc = request.resilienceContext;
+  const resilienceSection = rc
+    ? `
+${formatResilienceFindings(rc)}
+LIVE RISK RULES (these override the repository-evidence rules for runtime questions):
+- The user is watching a SIMULATED runtime incident (Live Risk view). It is a what-if replay of how these services behave under a fault, not a claim about the current source code.
+- Build/verification status (from the repo) and runtime risk (from this simulation) are different things. A room can be verified in code and still fail at runtime in the simulation. Never dismiss the incident because the code or tests look fine.
+- Answer runtime questions from the findings above. Explain them in plain language; do not invent a different root cause, forecast or fix, and say once that the incident is simulated.
+- If asked why, walk through what drifted first, how it spreads along dependencies, and why the recommended fix beats the alternatives (cite the before/after service counts).
+- If you disagree with the engine, say so as an open question, not as a correction.
+`
+    : '';
+  const resKey = rc ? `##res:${resilienceContextKey(rc)}` : '';
   const promptCacheKey = request.isFragmentRequest || request.bypassCache
     ? null
     : repo
-    ? `${repo.owner}/${repo.repo}##${repo.commitSha || 'no-commit'}##${request.selectedRoomId || 'none'}##${request.explanationLevel || 'beginner'}##${includeDiagram ? 'diag' : 'nodiag'}##${(repo.inspectedFiles || []).length}##findings:${findingsCount}##${cleanMsgKey}`
-    : `no-repo##${request.selectedRoomId || 'none'}##${request.explanationLevel || 'beginner'}##${includeDiagram ? 'diag' : 'nodiag'}##findings:${findingsCount}##${cleanMsgKey}`;
+    ? `${repo.owner}/${repo.repo}##${repo.commitSha || 'no-commit'}##${request.selectedRoomId || 'none'}##${request.explanationLevel || 'beginner'}##${includeDiagram ? 'diag' : 'nodiag'}##${(repo.inspectedFiles || []).length}##findings:${findingsCount}##${cleanMsgKey}${resKey}`
+    : `no-repo##${request.selectedRoomId || 'none'}##${request.explanationLevel || 'beginner'}##${includeDiagram ? 'diag' : 'nodiag'}##findings:${findingsCount}##${cleanMsgKey}${resKey}`;
 
   if (promptCacheKey) {
     const cachedPrompt = systemPromptCache.get(promptCacheKey);
@@ -848,6 +862,7 @@ GROUNDING & STRICT TRUTH POLICY:
 
 ${repoSection}
 ${selectedRoomNotice}
+${resilienceSection}
 ${fragmentSection}
 `;
 

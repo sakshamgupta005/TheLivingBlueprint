@@ -1,3 +1,4 @@
+import { formatResilienceFindings, resilienceContextKey } from '../domain/resilience/index.ts';
 import { generateRepairPrompt } from '../domain/investigation/promptGenerator.ts';
 import { validateInvestigationFinding } from '../domain/investigation/validator.ts';
 import type {
@@ -44,10 +45,28 @@ export function invalidateInvestigationCache(criteria?: {
   }
 }
 
+function resilienceKey(request: InvestigateApiRequest): string {
+  const rc = request.resilienceContext;
+  return rc ? resilienceContextKey(rc) : 'no-resilience';
+}
+
+/** Engine findings are computed deterministically; the AI explains them, it does not replace them. */
+function buildResilienceSection(request: InvestigateApiRequest): string {
+  const rc = request.resilienceContext;
+  if (!rc) return '';
+  return `
+${formatResilienceFindings(rc)}
+RESILIENCE RULES:
+- Explain and sanity-check the engine's ranking, forecast and recommended strategy for this room. Do not invent a different root cause; if you disagree, say so in "uncertainties".
+- Use category "cascade_risk" when the finding is about failure propagation.
+- Log lines and engine numbers are simulated: classify them as "observed" only for what the lines literally say, otherwise "inferred". Do not cite them in "evidencePaths".
+`;
+}
+
 export function buildInvestigationSystemPrompt(request: InvestigateApiRequest): string {
   const { roomId, roomName, roomLayer, roomStatus, roomEvidence, roomFilePaths, repoContext } = request;
 
-  const cacheKey = `${repoContext.owner}/${repoContext.repo}##${repoContext.commitSha || 'no-commit'}##${roomId}##${roomStatus || 'none'}##${(roomFilePaths || []).slice().sort().join(',')}##${(repoContext.inspectedFiles || []).length}`;
+  const cacheKey = `${repoContext.owner}/${repoContext.repo}##${repoContext.commitSha || 'no-commit'}##${roomId}##${roomStatus || 'none'}##${(roomFilePaths || []).slice().sort().join(',')}##${(repoContext.inspectedFiles || []).length}##${resilienceKey(request)}`;
   const cached = investigationPromptCache.get(cacheKey);
   if (cached) {
     return cached.prompt;
@@ -86,7 +105,7 @@ ${ciInfo}
 DETECTED TECHNOLOGIES: ${repoContext.detectedTechnologies.join(', ') || 'None identified'}
 
 ${sourceContext.formattedPromptSection}
-
+${buildResilienceSection(request)}
 SECURITY & ACCURACY RULES:
 - Ground your investigation ONLY in the provided files and evidence.
 - Every path in "evidencePaths" MUST exactly match one of the inspected or discovered files listed above. Do NOT invent file paths or line numbers.
@@ -107,7 +126,7 @@ OUTPUT FORMAT (JSON Object):
   "title": "Short title of the finding or status check",
   "explanation": "Clear explanation of what appears wrong without overstating certainty",
   "whyItMatters": "The user-visible or system-level consequence of this finding",
-  "category": "missing_proof" | "possible_bug" | "security_risk" | "configuration_risk" | "test_gap" | "dependency_risk" | "unknown",
+  "category": "missing_proof" | "possible_bug" | "security_risk" | "configuration_risk" | "test_gap" | "dependency_risk" | "cascade_risk" | "unknown",
   "severity": "info" | "low" | "medium" | "high",
   "evidenceClassification": "observed" | "inferred" | "unverified",
   "evidencePaths": ["exact/path/from/inspected/files"],
@@ -199,6 +218,7 @@ export async function executeRoomInvestigation(
           'configuration_risk',
           'test_gap',
           'dependency_risk',
+          'cascade_risk',
           'unknown',
         ],
       },

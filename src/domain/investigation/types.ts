@@ -1,3 +1,4 @@
+import type { ResilienceInvestigationContext } from '../resilience/types.ts';
 import type { CompanionReplyMessage, ExecutionTimingMetadata, AiErrorInfo } from '../../server/types.ts';
 
 export type IssueCategory =
@@ -7,6 +8,7 @@ export type IssueCategory =
   | 'configuration_risk'
   | 'test_gap'
   | 'dependency_risk'
+  | 'cascade_risk'
   | 'unknown';
 
 export type IssueSeverity = 'info' | 'low' | 'medium' | 'high';
@@ -71,6 +73,8 @@ export interface InvestigateApiRequest {
   roomEvidence: string;
   roomFilePaths?: string[];
   bypassCache?: boolean;
+  /** Optional deterministic resilience-engine findings (Part 2.5). */
+  resilienceContext?: ResilienceInvestigationContext;
   repoContext: {
     owner: string;
     repo: string;

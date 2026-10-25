@@ -16,6 +16,7 @@ const VALID_CATEGORIES = new Set<IssueCategory>([
   'configuration_risk',
   'test_gap',
   'dependency_risk',
+  'cascade_risk',
   'unknown',
 ]);
 

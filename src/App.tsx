@@ -12,9 +12,6 @@ import type { ArchitecturalRoom } from './types';
 import type { RoomInvestigationFinding } from './domain/investigation/types';
 import type { FixLifecycleState } from './domain/lifecycle/types';
 import type { WorkspaceSession, WorkspaceSummary } from './domain/workspace/types';
-import { GuidedWalkthrough } from './components/GuidedWalkthrough';
-import { evaluateWalkthroughSteps } from './domain/walkthrough/walkthroughEngine';
-import type { WalkthroughStep } from './domain/walkthrough/types';
 import {
   loadWorkspace,
   saveWorkspace,
@@ -23,6 +20,9 @@ import {
   getActiveWorkspaceId,
   setActiveWorkspaceId as setActiveWorkspaceStorageId,
 } from './domain/workspace/workspaceStorage';
+import { ResilienceDashboard } from './components/resilience/ResilienceDashboard.tsx';
+import type { RiskTier, ResilienceSnapshot } from './domain/resilience/types.ts';
+import { buildResilienceContext } from './domain/resilience/index.ts';
 
 export const App: React.FC = () => {
   const [rooms, setRooms] = useState<ArchitecturalRoom[]>(SAMPLE_ROOMS);
@@ -36,24 +36,63 @@ export const App: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<ChatMessageItem[]>([]);
   const [findingsByRoomId, setFindingsByRoomId] = useState<Record<string, RoomInvestigationFinding>>({});
   const [fixLifecyclesByRoomId, setFixLifecyclesByRoomId] = useState<Record<string, FixLifecycleState>>({});
-  const [externalRepoUrl, setExternalRepoUrl] = useState<string>('');
-  const [isWalkthroughOpen, setIsWalkthroughOpen] = useState<boolean>(true);
-  const [isAiConfigured, setIsAiConfigured] = useState<boolean>(true);
+  const [externalRepoUrl] = useState<string>('');
+
+  // Part 2.5: Application View Mode ('blueprint' | 'resilience')
+  // Live Risk -> chat: a queued question plus the service it is about.
+  const [queuedPrompt, setQueuedPrompt] = useState<{ id: number; text: string } | null>(null);
+  const [askFocusId, setAskFocusId] = useState<string | null>(null);
+  const [isChatOpen, setIsChatOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('lb.chat') !== 'closed';
+    } catch {
+      return true;
+    }
+  });
+  const setChatOpen = (open: boolean) => {
+    setIsChatOpen(open);
+    try {
+      localStorage.setItem('lb.chat', open ? 'open' : 'closed');
+    } catch {
+      /* storage unavailable: keep in-memory state */
+    }
+  };
+  const [viewMode, setViewMode] = useState<'blueprint' | 'resilience'>(() => {
+    try {
+      const saved = localStorage.getItem('lb.view');
+      return saved === 'resilience' ? 'resilience' : 'blueprint';
+    } catch {
+      return 'blueprint';
+    }
+  });
+
+  const [activeSnapshot, setActiveSnapshot] = useState<ResilienceSnapshot | null>(null);
+  const [riskByRoomId, setRiskByRoomId] = useState<Record<string, RiskTier>>({});
+  const applyStrategyRef = useRef<((stratId: string) => void) | null>(null);
+
+  useEffect(() => {
+    if (viewMode === 'resilience') setSelectedRoom(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleViewModeChange = (nextMode: 'blueprint' | 'resilience') => {
+    setViewMode(nextMode);
+    // Live Risk leads with the incident brief; the room panel opens only via "Room details".
+    if (nextMode === 'resilience') setSelectedRoom(null);
+    try {
+      localStorage.setItem('lb.view', nextMode);
+    } catch {
+      // Safe fallback if local storage is restricted
+    }
+  };
 
   const activeScanIdRef = useRef<number>(0);
 
   // Restore workspace session on initial mount
   useEffect(() => {
-    fetch('/api/health')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && typeof data.aiConfigured === 'boolean') {
-          setIsAiConfigured(data.aiConfigured);
-        }
-      })
-      .catch(() => {
-        // Fallback safely if health check endpoint fails
-      });
+    fetch('/api/health').catch(() => {
+      // Fallback safely if health check endpoint fails
+    });
 
     const recents = getRecentProjects();
     setRecentProjects(recents);
@@ -79,59 +118,13 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  const walkthroughEvaluation = evaluateWalkthroughSteps({
-    isSampleActive,
-    lastScanResult,
-    selectedRoom,
-    rooms,
-    chatMessages,
-    findingsByRoomId,
-    fixLifecyclesByRoomId,
-    isAiConfigured,
-  });
 
-  const handleWalkthroughAction = (actionId: NonNullable<WalkthroughStep['actionId']>) => {
-    switch (actionId) {
-      case 'prefill_demo':
-        setExternalRepoUrl('https://github.com/sakshamgupta005/patchboard-tasks-api');
-        break;
-      case 'select_room':
-        if (rooms.length > 0) {
-          handleSelectRoom(rooms[0]);
-        }
-        break;
-      case 'focus_blocked_room': {
-        const blocked = rooms.find(
-          (r) => r.status === 'blocked' || r.metrics?.ciStatus === 'failing'
-        );
-        if (blocked) {
-          setSelectedRoom(blocked);
-        } else if (rooms.length > 0) {
-          setSelectedRoom(rooms[0]);
-        }
-        break;
-      }
-      case 'ask_chat': {
-        const targetRoom = selectedRoom || rooms[0];
-        if (targetRoom) {
-          const queryText = `Tell me about ${targetRoom.name}: what verification evidence exists and what is failing?`;
-          const newMsg: ChatMessageItem = {
-            id: `user-walkthrough-${Date.now()}`,
-            sender: 'user',
-            text: queryText,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          };
-          handleChatMessagesChange([...chatMessages, newMsg]);
-        }
-        break;
-      }
-      case 'investigate':
-      case 'open_fix_report':
-        break;
+
+  const handleSelectRoom = (room: ArchitecturalRoom | null) => {
+    if (!room) {
+      setSelectedRoom(null);
+      return;
     }
-  };
-
-  const handleSelectRoom = (room: ArchitecturalRoom) => {
     const nextSelected = selectedRoom?.id === room.id ? null : room;
     setSelectedRoom(nextSelected);
 
@@ -324,9 +317,28 @@ export const App: React.FC = () => {
     setFixLifecyclesByRoomId({});
   };
 
+  const hasRiskAlert = Boolean(
+    riskByRoomId &&
+      Object.values(riskByRoomId).some(
+        (tier) => tier === 'high' || tier === 'critical' || tier === 'failed'
+      )
+  );
+
+  const handleNavigateToResilience = (roomId: string) => {
+    const target = rooms.find((r) => r.id === roomId);
+    if (target) {
+      setSelectedRoom(target);
+    }
+    setViewMode('resilience');
+  };
+
   const currentSourceName = isSampleActive
     ? SAMPLE_PROJECT.name
     : `${lastScanResult?.owner}/${lastScanResult?.repo}`;
+
+  const currentProjectName = isSampleActive
+    ? 'BookNook'
+    : (lastScanResult ? `${lastScanResult.owner}/${lastScanResult.repo}` : 'BookNook');
 
   return (
     <div className="app-shell">
@@ -339,6 +351,9 @@ export const App: React.FC = () => {
         isSavedData={isSavedData}
         commitSha={lastScanResult?.commitSha}
         scannedAt={lastScanResult?.scannedAt}
+        activeViewMode={viewMode}
+        onViewModeChange={handleViewModeChange}
+        hasRiskAlert={hasRiskAlert}
       />
 
       <RepoConnectBar
@@ -391,26 +406,18 @@ export const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Compact Guided Demonstration Walkthrough */}
-          <GuidedWalkthrough
-            evaluation={walkthroughEvaluation}
-            isOpen={isWalkthroughOpen}
-            onToggleOpen={() => setIsWalkthroughOpen(!isWalkthroughOpen)}
-            onAction={handleWalkthroughAction}
-          />
-
-          <div className="svg-canvas-wrapper">
-            <IsometricHouse
-              rooms={rooms}
-              selectedRoomId={selectedRoom?.id ?? null}
-              onSelectRoom={handleSelectRoom}
-              foundationTechnologies={
-                isSampleActive
-                  ? ['PostgreSQL', 'Docker']
-                  : (lastScanResult?.detectedTechnologies || [])
-              }
-            />
-
+          {/* Workspace Area: Blueprint Isometric House vs Resilience Cascading Dashboard */}
+          <div
+            className="workspace-house-container"
+            style={{
+              flex: 1,
+              display: viewMode === 'resilience' ? 'flex' : 'none',
+              overflow: 'hidden',
+              position: 'relative',
+              width: '100%',
+              height: '100%',
+            }}
+          >
             <RoomInspector
               room={selectedRoom}
               onClose={() => setSelectedRoom(null)}
@@ -428,18 +435,92 @@ export const App: React.FC = () => {
                   handleSelectRoom(targetRoom);
                 }
               }}
+              resilienceSnapshot={activeSnapshot}
+              onApplyRecoveryStrategy={(stratId) => applyStrategyRef.current?.(stratId)}
+              onNavigateToResilience={handleNavigateToResilience}
+            />
+
+            <ResilienceDashboard
+              onAskAi={(question, focusId) => {
+                setAskFocusId(focusId);
+                setChatOpen(true);
+                setQueuedPrompt({ id: Date.now(), text: question });
+              }}
+              allRooms={rooms}
+              selectedRoom={selectedRoom}
+              onSelectRoom={handleSelectRoom}
+              hasScanResult={!isSampleActive && Boolean(lastScanResult)}
+              projectName={currentProjectName}
+              onRiskChange={(mapping) => setRiskByRoomId(mapping)}
+              onSnapshotChange={setActiveSnapshot}
+              onRegisterApplyStrategy={(fn) => {
+                applyStrategyRef.current = fn;
+              }}
+            />
+          </div>
+
+          <div
+            className="svg-canvas-wrapper"
+            style={{ display: viewMode === 'blueprint' ? 'flex' : 'none' }}
+          >
+            <RoomInspector
+              room={selectedRoom}
+              onClose={() => setSelectedRoom(null)}
+              scanResult={lastScanResult}
+              isSampleActive={isSampleActive}
+              onRoomUpdated={handleRoomUpdated}
+              savedFinding={selectedRoom ? findingsByRoomId[selectedRoom.id] : undefined}
+              onFindingChange={handleFindingChange}
+              savedLifecycleState={selectedRoom ? fixLifecyclesByRoomId[selectedRoom.id] : undefined}
+              onLifecycleChange={handleLifecycleChange}
+              allRooms={rooms}
+              onSelectRoom={(roomId) => {
+                const targetRoom = rooms.find((r) => r.id === roomId);
+                if (targetRoom) {
+                  handleSelectRoom(targetRoom);
+                }
+              }}
+              resilienceSnapshot={activeSnapshot}
+              onApplyRecoveryStrategy={(stratId) => applyStrategyRef.current?.(stratId)}
+              onNavigateToResilience={handleNavigateToResilience}
+            />
+
+            <IsometricHouse
+              rooms={rooms}
+              selectedRoomId={selectedRoom?.id ?? null}
+              onSelectRoom={handleSelectRoom}
+              foundationTechnologies={
+                isSampleActive
+                  ? ['PostgreSQL', 'Docker']
+                  : (lastScanResult?.detectedTechnologies || [])
+              }
+              riskByRoomId={riskByRoomId}
             />
           </div>
         </section>
 
         {/* Right side: Persistent Chat Panel */}
+        {isChatOpen ? (
         <ChatPanel
+          onMinimize={() => {
+            // A consumed question must not be re-sent when the chat remounts.
+            setQueuedPrompt(null);
+            setAskFocusId(null);
+            setChatOpen(false);
+          }}
+          resilienceContext={
+            viewMode === 'resilience' && activeSnapshot
+              ? buildResilienceContext(activeSnapshot, askFocusId ?? activeSnapshot.rootCause.candidates[0]?.serviceId ?? '')
+              : undefined
+          }
+          queuedPrompt={queuedPrompt}
           selectedRoom={selectedRoom}
           scanResult={lastScanResult}
           isSampleActive={isSampleActive}
           rooms={rooms}
           initialMessages={chatMessages}
           investigationFindings={findingsByRoomId}
+          onFindingChange={handleFindingChange}
           onMessagesChange={handleChatMessagesChange}
           onSelectRoom={(roomId) => {
             const targetRoom = rooms.find((r) => r.id === roomId);
@@ -448,6 +529,11 @@ export const App: React.FC = () => {
             }
           }}
         />
+        ) : (
+          <button type="button" className="chat-reopen" onClick={() => setChatOpen(true)} aria-label="Open Barkley and Cleo chat">
+            💬 <span>Barkley &amp; Cleo</span>
+          </button>
+        )}
       </main>
 
       {/* Telemetry & Inspected Files Drawer */}

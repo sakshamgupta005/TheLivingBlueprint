@@ -1,0 +1,25 @@
+/* Analyze-your-own-logs panel (Live Risk). Same density and tokens as the incident brief. */
+.la { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 10px 12px; }
+.la__head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 8px; }
+.la__title { margin: 0; font-size: 13px; color: var(--text-primary); }
+.la__sub { margin: 2px 0 0; font-size: 11.5px; color: var(--text-secondary); max-width: 80ch; line-height: 1.45; }
+.la__input { width: 100%; box-sizing: border-box; min-height: 110px; max-height: 260px; resize: vertical; padding: 8px; border-radius: 4px; border: 1px solid var(--border-subtle); background: var(--bg-main); color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; line-height: 1.45; }
+.la__input:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.la__actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.la__file { position: relative; padding: 5px 12px; border-radius: 4px; font-size: 11.5px; cursor: pointer; background: var(--bg-surface-elevated); color: var(--text-primary); border: 1px solid var(--border-subtle); }
+.la__file:hover { border-color: var(--accent-light); }
+.la__file:focus-within { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.la__file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.la__error { margin: 6px 0 0; font-size: 11.5px; color: var(--risk-critical); }
+.la__result { margin-top: 10px; border-top: 1px solid var(--border-subtle); padding-top: 8px; }
+.la__summary { margin: 0 0 6px; font-size: 11.5px; color: var(--text-secondary); }
+.la__note { margin: 0 0 6px; font-size: 11px; color: var(--risk-watch); }
+.la__cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.la__list { margin: 0; padding-left: 18px; font-size: 12px; color: var(--text-primary); }
+.la__list > li { margin-bottom: 6px; }
+.la__plain { list-style: none; margin: 0 0 6px; padding: 0; font-size: 11.5px; color: var(--text-secondary); display: grid; gap: 4px; }
+.la__mono { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+.la__bad { color: var(--risk-critical); }
+.la__gap { margin-top: 8px; }
+@media (max-width: 1100px) { .la__cols { grid-template-columns: 1fr; } }
+.la__show { margin: 0 0 8px; }

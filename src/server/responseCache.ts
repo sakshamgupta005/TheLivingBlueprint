@@ -1,3 +1,4 @@
+import { resilienceContextKey } from '../domain/resilience/index.ts';
 import { isDiagramIntentRequested } from './contextBuilder.ts';
 import type {
   ChatApiRequest,
@@ -88,7 +89,7 @@ export function buildChatCacheKey(request: ChatApiRequest): string | null {
     .sort()
     .join(';');
 
-  return `chat##${repo.owner}/${repo.repo}@${commitSha}##room:${roomId}##level:${level}##diag:${diagIntent}##msg:${normMsg}##ctx:${contextFingerprint.length}:${repo.totalFiles}##v1`;
+  return `chat##${repo.owner}/${repo.repo}@${commitSha}##room:${roomId}##level:${level}##diag:${diagIntent}##msg:${normMsg}##ctx:${contextFingerprint.length}:${repo.totalFiles}##res:${request.resilienceContext ? `${resilienceContextKey(request.resilienceContext)}` : 'none'}##v1`;
 }
 
 /**
@@ -100,16 +101,18 @@ export function buildInvestigationCacheKey(request: InvestigateApiRequest): stri
     return null;
   }
 
-  const repo = request.repoContext;
-  if (!repo || !repo.owner || !repo.repo || !request.roomId) {
+  if (!request.roomId) {
     return null;
   }
 
-  const commitSha = repo.commitSha || 'no-commit';
+  const repo = request.repoContext;
+  const owner = repo?.owner || 'workspace';
+  const repoName = repo?.repo || 'project';
+  const commitSha = repo?.commitSha || 'no-commit';
   const roomStatus = request.roomStatus || 'unknown';
   const sortedFiles = (request.roomFilePaths || []).slice().sort().join(',');
 
-  return `investigate##${repo.owner}/${repo.repo}@${commitSha}##room:${request.roomId}##status:${roomStatus}##files:${sortedFiles}##v1`;
+  return `investigate##${owner}/${repoName}@${commitSha}##room:${request.roomId}##status:${roomStatus}##files:${sortedFiles}##res:${request.resilienceContext ? `${resilienceContextKey(request.resilienceContext)}` : 'none'}##v1`;
 }
 
 function getFromCache<T extends { timestamp: number }>(

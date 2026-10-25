@@ -1,3 +1,4 @@
+import type { ResilienceInvestigationContext } from '../domain/resilience/types.ts';
 import React, { useState, useRef, useEffect } from 'react';
 import { PixelPetAvatar } from './PixelPetAvatar.tsx';
 import { WorkflowDiagramView } from './WorkflowDiagramView.tsx';
@@ -27,6 +28,9 @@ export interface ChatMessageItem {
   providerUsed?: 'gemini' | 'groq' | 'cloudflare' | 'omniroute';
   suggestedFollowUps?: string[];
   cached?: boolean;
+  promptTargetRoomId?: string;
+  promptTargetRoomName?: string;
+  generatedPrompt?: string;
 }
 
 export interface ChatPanelProps {
@@ -36,8 +40,14 @@ export interface ChatPanelProps {
   rooms: ArchitecturalRoom[];
   initialMessages?: ChatMessageItem[];
   investigationFindings?: Record<string, RoomInvestigationFinding>;
+  onFindingChange?: (roomId: string, newFinding: RoomInvestigationFinding | null) => void;
   onMessagesChange?: (messages: ChatMessageItem[]) => void;
   onSelectRoom?: (roomId: string) => void;
+  onMinimize?: () => void;
+  /** Engine findings sent with each message while the Live Risk view is open. */
+  resilienceContext?: ResilienceInvestigationContext;
+  /** A question to send right away (e.g. from the incident brief); `id` makes repeats fire. */
+  queuedPrompt?: { id: number; text: string } | null;
 }
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -47,8 +57,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   rooms,
   initialMessages,
   investigationFindings,
+  onFindingChange,
   onMessagesChange,
   onSelectRoom,
+  onMinimize,
+  resilienceContext,
+  queuedPrompt,
 }) => {
   const [messages, setMessages] = useState<ChatMessageItem[]>(() => {
     if (initialMessages && initialMessages.length > 0) {
@@ -126,6 +140,75 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorInfo, setErrorInfo] = useState<AiErrorInfo | null>(null);
   const [showHelpModal, setShowHelpModal] = useState(false);
+  const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
+  const [isGeneratingPromptFor, setIsGeneratingPromptFor] = useState<string | null>(null);
+
+  const handleCopyPrompt = async (promptText: string, messageId: string) => {
+    try {
+      await navigator.clipboard.writeText(promptText);
+      setCopiedPromptId(messageId);
+      setTimeout(() => setCopiedPromptId(null), 2500);
+    } catch {
+      const textArea = document.createElement('textarea');
+      textArea.value = promptText;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      setCopiedPromptId(messageId);
+      setTimeout(() => setCopiedPromptId(null), 2500);
+    }
+  };
+
+  const handleGeneratePromptForRoom = async (roomId: string) => {
+    const targetRoom = rooms.find((r) => r.id === roomId);
+    if (!targetRoom || isGeneratingPromptFor) return;
+    setIsGeneratingPromptFor(roomId);
+    try {
+      const repoContext = !isSampleActive && scanResult
+        ? {
+            owner: scanResult.owner,
+            repo: scanResult.repo,
+            branch: scanResult.metadata?.defaultBranch || 'main',
+            commitSha: scanResult.commitSha,
+            totalFiles: scanResult.totalFilesDiscovered,
+            inspectedFiles: scanResult.inspectedFiles.map((f) => ({
+              path: f.path,
+              category: f.category,
+              contentExcerpt: f.contentExcerpt,
+              sizeBytes: f.sizeBytes,
+            })),
+            discoveredFilePaths: scanResult.discoveredFilePaths || scanResult.inspectedFiles.map((f) => f.path),
+            detectedTechnologies: scanResult.detectedTechnologies,
+            dependencies: targetRoom.dependencies,
+          }
+        : undefined;
+
+      const res = await fetch('/api/investigate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: targetRoom.id,
+          roomName: targetRoom.name,
+          roomLayer: targetRoom.layer,
+          roomStatus: targetRoom.status,
+          roomEvidence: targetRoom.evidence,
+          roomFilePaths: targetRoom.filePaths,
+          bypassCache: false,
+          repoContext,
+          resilienceContext,
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.finding) {
+        onFindingChange?.(targetRoom.id, data.finding);
+      }
+    } catch {
+      // silently retain state
+    } finally {
+      setIsGeneratingPromptFor(null);
+    }
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -459,6 +542,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           selectedRoomId: selectedRoom?.id,
           repoContext,
           investigationFindings,
+          resilienceContext,
           bypassCache: isRetry,
         }),
       });
@@ -531,6 +615,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           return;
         }
 
+        const activeRoom =
+          selectedRoom ??
+          (resilienceContext?.rootCauses?.[0]?.roomId
+            ? rooms.find((r) => r.id === resilienceContext.rootCauses[0].roomId || r.name.toLowerCase() === resilienceContext.rootCauses[0].roomId.toLowerCase())
+            : null) ??
+          null;
+
         const isLastReply = i === companionReplies.length - 1;
         const item: ChatMessageItem = {
           id: `reply-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
@@ -545,6 +636,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             ? reply.suggestedFollowUps || companionReplies[0].suggestedFollowUps
             : reply.suggestedFollowUps,
           cached: Boolean(data.cached || data.timing?.cached),
+          promptTargetRoomId: isLastReply && activeRoom ? activeRoom.id : undefined,
+          promptTargetRoomName: isLastReply && activeRoom ? activeRoom.name : undefined,
+          generatedPrompt: isLastReply && activeRoom ? investigationFindings?.[activeRoom.id]?.generatedPrompt : undefined,
         };
 
         currentAccumulated = [...currentAccumulated, item];
@@ -588,6 +682,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       isSendingRef.current = false;
     }
   };
+
+  const lastQueuedId = useRef<number | null>(null);
+  useEffect(() => {
+    if (!queuedPrompt || queuedPrompt.id === lastQueuedId.current) return;
+    // Deferred so React StrictMode's mount/unmount/mount (which aborts in-flight requests) sends it once.
+    const timer = window.setTimeout(() => {
+      lastQueuedId.current = queuedPrompt.id;
+      void handleSendMessage(queuedPrompt.text);
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queuedPrompt]);
 
   const handleStopGenerating = () => {
     revealCancelledRef.current = true;
@@ -661,6 +767,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </div>
         </div>
         <div className="chat-panel-subheading">One model · Two distinct personalities</div>
+        {onMinimize && (
+          <button type="button" className="chat-minimize" onClick={onMinimize} aria-label="Minimise chat" title="Minimise chat">
+            –
+          </button>
+        )}
 
         {/* Compact explanation level selector */}
         <div className="chat-level-selector" role="radiogroup" aria-label="Explanation level">
@@ -763,6 +874,57 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     Ref: <code>{msg.evidenceReference}</code>
                   </div>
                 )}
+                {/* Actionable Coding-Agent Fix Prompt Card */}
+                {(() => {
+                  const targetRoom =
+                    (msg.promptTargetRoomId ? rooms.find((r) => r.id === msg.promptTargetRoomId) : null) ||
+                    rooms.find((r) => msg.text.includes(r.name) || (r.name.length > 5 && msg.text.toLowerCase().includes(r.name.toLowerCase()))) ||
+                    (resilienceContext?.rootCauses?.[0]?.roomId
+                      ? rooms.find((r) => r.id === resilienceContext.rootCauses[0].roomId || r.name.toLowerCase() === resilienceContext.rootCauses[0].roomId.toLowerCase())
+                      : null) ||
+                    (selectedRoom?.id && msg.text.toLowerCase().includes('root cause') ? selectedRoom : null);
+
+                  if (!targetRoom) return null;
+                  const finding = investigationFindings?.[targetRoom.id];
+                  const promptToCopy = msg.generatedPrompt || finding?.generatedPrompt;
+                  const isCopied = copiedPromptId === msg.id;
+                  const isGenerating = isGeneratingPromptFor === targetRoom.id;
+
+                  return (
+                    <div className="chat-prompt-card" role="region" aria-label={`Fix prompt for ${targetRoom.name}`}>
+                      <div className="chat-prompt-card__header">
+                        <span className="chat-prompt-card__title">
+                          🛠️ Fix Prompt: {targetRoom.name}
+                        </span>
+                        {promptToCopy ? (
+                          <button
+                            type="button"
+                            className={`btn-copy-prompt-primary ${isCopied ? 'copied' : ''}`}
+                            onClick={() => handleCopyPrompt(promptToCopy, msg.id)}
+                            aria-label={`Copy fix prompt for ${targetRoom.name}`}
+                          >
+                            {isCopied ? '✓ Copied to clipboard!' : '📋 Copy Fix Prompt for Agent'}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn-copy-prompt-primary"
+                            onClick={() => handleGeneratePromptForRoom(targetRoom.id)}
+                            disabled={isGenerating}
+                            aria-label={`Generate fix prompt for ${targetRoom.name}`}
+                          >
+                            {isGenerating ? '⏳ Generating prompt...' : '⚡ Generate Fix Prompt'}
+                          </button>
+                        )}
+                      </div>
+                      <p className="chat-prompt-card__hint">
+                        {promptToCopy
+                          ? 'Formatted with verified code excerpts, line numbers, and tests ready to paste into Antigravity, Cursor, or Claude.'
+                          : 'Deep inspects repository source files with Gemini to build copy-ready repair instructions.'}
+                      </p>
+                    </div>
+                  );
+                })()}
                 {msg.workflowDiagram && (
                   <WorkflowDiagramView
                     diagram={msg.workflowDiagram}

@@ -1,11 +1,17 @@
 import React from 'react';
 import { ArchitecturalRoom, RoomStatus } from '../types';
+import type { RiskTier } from '../domain/resilience/types.ts';
 
 interface IsometricHouseProps {
   rooms: ArchitecturalRoom[];
   selectedRoomId: string | null;
   onSelectRoom: (room: ArchitecturalRoom) => void;
   foundationTechnologies?: string[];
+  riskByRoomId?: Record<string, RiskTier>;
+  cascadePath?: string[];
+  isCalming?: boolean;
+  containedLabel?: string | null;
+  isEarlyState?: boolean;
 }
 
 const ORIGIN_X = 450;
@@ -27,7 +33,31 @@ export const IsometricHouse: React.FC<IsometricHouseProps> = ({
   selectedRoomId,
   onSelectRoom,
   foundationTechnologies,
+  riskByRoomId,
+  cascadePath,
+  isCalming = false,
+  containedLabel,
+  isEarlyState = false,
 }) => {
+  const [activeCascadeHop, setActiveCascadeHop] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    if (cascadePath && cascadePath.length > 1) {
+      setActiveCascadeHop(0);
+    }
+  }, [cascadePath?.join('>')]);
+
+  React.useEffect(() => {
+    if (activeCascadeHop === null || !cascadePath || cascadePath.length <= 1) return;
+    if (activeCascadeHop >= cascadePath.length) {
+      const timer = window.setTimeout(() => setActiveCascadeHop(null), 1200);
+      return () => window.clearTimeout(timer);
+    }
+    const timer = window.setTimeout(() => {
+      setActiveCascadeHop((h) => (h !== null ? h + 1 : null));
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [activeCascadeHop, cascadePath?.length]);
   // Foundation slab coordinates
   const foundation = {
     x: -190,
@@ -184,6 +214,17 @@ export const IsometricHouse: React.FC<IsometricHouseProps> = ({
         <filter id="soft-shadow" x="-10%" y="-10%" width="130%" height="130%">
           <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#000000" floodOpacity="0.4" />
         </filter>
+
+        {/* Operational risk failed hatch pattern overlay (Part 2.5) */}
+        <pattern
+          id="risk-hatch"
+          width="8"
+          height="8"
+          patternUnits="userSpaceOnUse"
+          patternTransform="rotate(45)"
+        >
+          <line x1="0" y1="0" x2="0" y2="8" stroke="var(--risk-failed)" strokeWidth="2.5" opacity="0.6" />
+        </pattern>
       </defs>
 
       {/* 1. Structural Ground Pillars (Sub-foundation bedrock) */}
@@ -369,6 +410,122 @@ export const IsometricHouse: React.FC<IsometricHouseProps> = ({
                   />
                 )}
 
+                {/* Operational Risk Overlay (Part 2.5) - Rings pulse by tier, calm down after fix */}
+                {(() => {
+                  const riskTier = riskByRoomId ? riskByRoomId[room.id] : undefined;
+                  if (!riskTier || riskTier === 'healthy') return null;
+
+                  const calmingClass = isCalming ? 'risk-ring-calming' : '';
+
+                  if (riskTier === 'failed') {
+                    return (
+                      <g pointerEvents="none" className={`risk-ring-failed-group ${calmingClass}`}>
+                        <polygon
+                          points={polyPoints(rTop)}
+                          fill="url(#risk-hatch)"
+                          opacity="0.35"
+                          className="risk-hatch-fill"
+                        />
+                        <polygon
+                          points={polyPoints(rTop)}
+                          fill="none"
+                          stroke="var(--risk-failed)"
+                          strokeWidth="3"
+                          strokeDasharray="6,4"
+                          className={`risk-ring-pulse-failed ${calmingClass}`}
+                        />
+                      </g>
+                    );
+                  }
+
+                  if (riskTier === 'critical') {
+                    return (
+                      <polygon
+                        points={polyPoints(rTop)}
+                        fill="none"
+                        stroke="var(--risk-critical)"
+                        strokeWidth="3.5"
+                        filter="drop-shadow(0 0 10px var(--risk-glow-critical))"
+                        pointerEvents="none"
+                        className={`risk-ring-pulse-critical ${calmingClass}`}
+                      />
+                    );
+                  }
+
+                  if (riskTier === 'high') {
+                    return (
+                      <polygon
+                        points={polyPoints(rTop)}
+                        fill="none"
+                        stroke="var(--risk-high)"
+                        strokeWidth="3"
+                        filter="drop-shadow(0 0 6px var(--risk-glow-high))"
+                        pointerEvents="none"
+                        className={`risk-ring-pulse-high ${calmingClass}`}
+                      />
+                    );
+                  }
+
+                  if (riskTier === 'watch') {
+                    return (
+                      <polygon
+                        points={polyPoints(rTop)}
+                        fill="none"
+                        stroke="var(--risk-watch)"
+                        strokeWidth="2"
+                        pointerEvents="none"
+                        className={`risk-ring-pulse-watch ${calmingClass}`}
+                      />
+                    );
+                  }
+
+                  return null;
+                })()}
+
+                {/* Cascade Hop Indicator along Path */}
+                {(() => {
+                  if (!cascadePath || cascadePath.length === 0) return null;
+                  const hopIdx = cascadePath.indexOf(room.id);
+                  if (hopIdx === -1) return null;
+                  const isCurrentHop = activeCascadeHop === hopIdx;
+                  return (
+                    <g pointerEvents="none">
+                      {isCurrentHop && (
+                        <polygon
+                          points={polyPoints(rTop)}
+                          fill="none"
+                          stroke="var(--risk-critical)"
+                          strokeWidth="4"
+                          className="cascade-hop-active-pulse"
+                        />
+                      )}
+                      <g transform={`translate(${centerIso.x + 36}, ${centerIso.y - 18})`}>
+                        <rect
+                          x="-14"
+                          y="-8"
+                          width="28"
+                          height="14"
+                          rx="3"
+                          fill="rgba(30, 20, 18, 0.9)"
+                          stroke={isCurrentHop ? 'var(--risk-critical)' : 'var(--border-subtle)'}
+                          strokeWidth="1"
+                        />
+                        <text
+                          x="0"
+                          y="2"
+                          textAnchor="middle"
+                          fill={isCurrentHop ? 'var(--risk-critical)' : 'var(--text-muted)'}
+                          fontSize="8"
+                          fontFamily="var(--font-mono)"
+                          fontWeight="700"
+                        >
+                          hop {hopIdx + 1}
+                        </text>
+                      </g>
+                    </g>
+                  );
+                })()}
+
                 {/* Room Name & Status Tag on Top Face */}
                 <g pointerEvents="none" transform={`translate(${centerIso.x}, ${centerIso.y - 10})`}>
                   <text
@@ -505,6 +662,60 @@ export const IsometricHouse: React.FC<IsometricHouseProps> = ({
           API GATEWAY & ROUTING
         </text>
       </g>
+
+      {/* Contained containment notice overlay */}
+      {containedLabel && (
+        <g className="house-contained-indicator" transform="translate(450, 42)">
+          <rect
+            x="-120"
+            y="-16"
+            width="240"
+            height="32"
+            rx="6"
+            fill="rgba(24, 38, 28, 0.95)"
+            stroke="var(--status-verified)"
+            strokeWidth="1.5"
+          />
+          <text
+            x="0"
+            y="5"
+            textAnchor="middle"
+            fill="var(--recommend)"
+            fontSize="12"
+            fontFamily="var(--font-mono)"
+            fontWeight="700"
+          >
+            {containedLabel}
+          </text>
+        </g>
+      )}
+
+      {/* Early / Normal traffic prompt overlay (t < 12) */}
+      {isEarlyState && (
+        <g className="house-early-state-indicator" transform="translate(450, 42)">
+          <rect
+            x="-175"
+            y="-16"
+            width="350"
+            height="32"
+            rx="6"
+            fill="rgba(30, 24, 22, 0.92)"
+            stroke="var(--border-subtle)"
+            strokeWidth="1"
+          />
+          <text
+            x="0"
+            y="5"
+            textAnchor="middle"
+            fill="var(--text-secondary)"
+            fontSize="11"
+            fontFamily="-apple-system, BlinkMacSystemFont, sans-serif"
+            fontWeight="500"
+          >
+            Watching normal traffic… press ▶ to start the incident
+          </text>
+        </g>
+      )}
     </svg>
   );
 };

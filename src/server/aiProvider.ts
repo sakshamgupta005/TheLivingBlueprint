@@ -416,14 +416,12 @@ export async function executeAiChat(
       systemInstruction,
       messages: conversationContents,
       temperature: request.isFragmentRequest ? 0.35 : 0.7,
-      maxOutputTokens: request.isFragmentRequest ? 500 : undefined,
+      maxOutputTokens: request.isFragmentRequest ? 2048 : undefined,
       responseSchema: chatResponseSchema,
       feature: 'chat',
-      // Hard cap the user ever waits: 25s. The primary provider gets 15s (real answers with
-      // repository context regularly need >10s); the fallback gets whatever remains.
-      // Fast answers are unaffected: these are give-up limits, not delays.
-      overallTimeoutMs: 25000,
-      perProviderTimeoutMs: 15000,
+      // Allow primary provider up to 20s for rich repository context, with 32s overall cap
+      overallTimeoutMs: 32000,
+      perProviderTimeoutMs: 20000,
     },
     env,
     fetchFn,
