@@ -27,7 +27,8 @@ interface ResilienceDashboardProps {
   projectName?: string;
   onRiskChange?: (riskMap: Record<string, RiskTier>) => void;
   onSnapshotChange?: (snapshot: ResilienceSnapshot) => void;
-  onRegisterApplyStrategy?: (fn: (strategyId: string) => void) => void;
+  onRegisterApplyStrategy?: (fn: (strategyId: string, targetServiceId?: string) => void) => void;
+  onRegisterClearStrategy?: (fn: () => void) => void;
   /** Sends a question to Barkley & Cleo with the engine findings for the focused service. */
   onAskAi?: (question: string, focusId: string | null) => void;
 }
@@ -41,6 +42,7 @@ export const ResilienceDashboard: React.FC<ResilienceDashboardProps> = ({
   onRiskChange,
   onSnapshotChange,
   onRegisterApplyStrategy,
+  onRegisterClearStrategy,
   onAskAi,
 }) => {
   const [pb, dispatch] = useReducer(playbackReducer, undefined, () => createPlayback());
@@ -85,15 +87,25 @@ export const ResilienceDashboard: React.FC<ResilienceDashboardProps> = ({
   // Register external strategy application dispatcher (e.g. from RoomInspector)
   useEffect(() => {
     if (onRegisterApplyStrategy) {
-      onRegisterApplyStrategy((strategyId: string) => {
+      onRegisterApplyStrategy((strategyId: string, targetServiceId?: string) => {
         // Use the outcome's own target (rate-limit targets the entry service, not the root cause).
         const outcome = snapshot.recovery.outcomes.find((o) => o.strategyId === strategyId);
         if (!outcome) return;
-        dispatch({ type: 'applyStrategy', strategyId: strategyId as RecoveryStrategyId, targetServiceId: outcome.targetServiceId });
+        const target = targetServiceId || outcome.targetServiceId;
+        dispatch({ type: 'applyStrategy', strategyId: strategyId as RecoveryStrategyId, targetServiceId: target });
         dispatch({ type: 'play' });
       });
     }
   }, [snapshot.recovery.outcomes, onRegisterApplyStrategy]);
+
+  useEffect(() => {
+    if (onRegisterClearStrategy) {
+      onRegisterClearStrategy(() => {
+        dispatch({ type: 'clearStrategy' });
+        dispatch({ type: 'play' });
+      });
+    }
+  }, [onRegisterClearStrategy]);
 
   // Pass risk tiers and snapshot up to parent for IsometricHouse overlay & RoomInspector
   useEffect(() => {

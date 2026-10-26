@@ -11,7 +11,11 @@ import { deriveRoomInternals } from '../domain/workflow/roomInternalsEngine.ts';
 import { scopeRepoContext } from '../server/contextBuilder.ts';
 import type { AiErrorInfo } from '../server/types.ts';
 import type { ResilienceSnapshot } from '../domain/resilience/types.ts';
-import { buildResilienceContext } from '../domain/resilience/index.ts';
+import { buildResilienceContext, relatedServiceIds } from '../domain/resilience/index.ts';
+import { CascadeGraph } from './resilience/CascadeGraph.tsx';
+import { StrategyComparison } from './resilience/StrategyComparison.tsx';
+import { SignalTimeline } from './resilience/SignalTimeline.tsx';
+import { LogStream } from './resilience/LogStream.tsx';
 
 interface RoomInspectorProps {
   room: ArchitecturalRoom | null;
@@ -26,7 +30,8 @@ interface RoomInspectorProps {
   savedLifecycleState?: FixLifecycleState | null;
   onLifecycleChange?: (roomId: string, state: FixLifecycleState | null) => void;
   resilienceSnapshot?: ResilienceSnapshot | null;
-  onApplyRecoveryStrategy?: (strategyId: string) => void;
+  onApplyRecoveryStrategy?: (strategyId: string, targetServiceId?: string) => void;
+  onClearRecoveryStrategy?: () => void;
   onNavigateToResilience?: (roomId: string) => void;
 }
 
@@ -44,6 +49,7 @@ export const RoomInspector: React.FC<RoomInspectorProps> = ({
   onLifecycleChange,
   resilienceSnapshot,
   onApplyRecoveryStrategy,
+  onClearRecoveryStrategy,
   onNavigateToResilience,
 }) => {
   const [isInvestigating, setIsInvestigating] = useState(false);
@@ -57,11 +63,13 @@ export const RoomInspector: React.FC<RoomInspectorProps> = ({
   const [isExpanded, setIsExpanded] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
   const [internalsViewMode, setInternalsViewMode] = useState<'diagram' | 'simulation' | 'evidence_chain'>('diagram');
-  const [activeTab, setActiveTab] = useState<'overview' | 'simulate' | 'evidence' | 'fix'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'resilience' | 'evidence' | 'simulate' | 'fix'>('overview');
+  const [expandedModalTab, setExpandedModalTab] = useState<'unified' | 'build' | 'runtime' | 'fix'>('unified');
+  const [previewStrategyId, setPreviewStrategyId] = useState<string | null>(null);
   const [showMoreOverview, setShowMoreOverview] = useState(false);
   const [showAllFiles, setShowAllFiles] = useState(false);
 
-  const handleJumpTo = (target: 'graph' | 'simulation' | 'test_evidence' | 'source' | 'related_room', extraId?: string) => {
+  const handleJumpTo = (target: 'graph' | 'simulation' | 'test_evidence' | 'source' | 'related_room' | 'runtime' | 'resilience', extraId?: string) => {
     if (target === 'graph') {
       setActiveTab('simulate');
       setInternalsViewMode('diagram');
@@ -87,6 +95,9 @@ export const RoomInspector: React.FC<RoomInspectorProps> = ({
       setActiveTab('evidence');
       const el = document.querySelector('.finding-code-evidence-box');
       el?.scrollIntoView({ behavior: 'smooth' });
+    } else if (target === 'runtime' || target === 'resilience') {
+      setActiveTab('resilience');
+      setIsExpanded(false);
     } else if (target === 'related_room' && extraId && onSelectRoom) {
       setIsExpanded(false);
       onSelectRoom(extraId);
@@ -464,8 +475,63 @@ const getPlainStatusText = (status: ArchitecturalRoom['status']) => {
   const barkleyRaw = barkleyMsg?.text || '';
   const barkleyText = barkleyRaw.length > 140 ? barkleyRaw.slice(0, 137) + '...' : barkleyRaw;
 
+  const roomResilience = useMemo(() => {
+    if (!resilienceSnapshot || !room) return null;
+    const tier = resilienceSnapshot.riskByRoomId[room.id] || 'healthy';
+    const forecastItem = resilienceSnapshot.forecast.byService[room.id];
+    const riskVal = forecastItem?.risk ?? 0;
+    const etaVal = forecastItem?.etaTicks ?? null;
+
+    const topRoot = resilienceSnapshot.rootCause.candidates.find((rc) => rc.serviceId === room.id);
+    const serviceView = resilienceSnapshot.services.find((s) => s.id === room.id);
+    const relatedIds = relatedServiceIds(resilienceSnapshot, room.id);
+    const isAtRisk = tier === 'high' || tier === 'critical' || tier === 'failed';
+    const recOutcome = resilienceSnapshot.recovery.outcomes.find(
+      (o) => o.strategyId === resilienceSnapshot.recovery.recommendedId
+    );
+
+    const rootCauseRankText = topRoot
+      ? `#${topRoot.rank} root cause (${Math.round(topRoot.confidence * 100)}%)`
+      : 'Not root cause';
+
+    const tickSecs = resilienceSnapshot.scenario?.tickSeconds || 10;
+    const failTimeText = serviceView?.observedFailed
+      ? 'Failing now'
+      : etaVal !== null
+      ? `fails in ~${Math.max(1, Math.round((etaVal * tickSecs) / 60))} min`
+      : 'Nominal';
+
+    const evidenceLines: string[] =
+      topRoot && topRoot.reasons && topRoot.reasons.length > 0
+        ? topRoot.reasons
+        : [
+            `Error rate: ${(riskVal * 100).toFixed(1)}% within nominal threshold`,
+            'No active template spike detected in Drain-lite parse tree',
+          ];
+
+    return {
+      tier,
+      riskVal,
+      etaVal,
+      topRoot,
+      serviceView,
+      relatedIds,
+      isAtRisk,
+      recOutcome,
+      rootCauseRankText,
+      failTimeText,
+      evidenceLines,
+    };
+  }, [resilienceSnapshot, room]);
+
   const handleTabKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    const tabs: ('overview' | 'simulate' | 'evidence' | 'fix')[] = ['overview', 'simulate', 'evidence', 'fix'];
+    const tabs: ('overview' | 'resilience' | 'evidence' | 'simulate' | 'fix')[] = [
+      'overview',
+      'resilience',
+      'evidence',
+      'simulate',
+      'fix',
+    ];
     const currentIndex = tabs.indexOf(activeTab);
     if (e.key === 'ArrowRight') {
       e.preventDefault();
@@ -481,37 +547,8 @@ const getPlainStatusText = (status: ArchitecturalRoom['status']) => {
   };
 
   const renderRuntimeRiskBlock = () => {
-    if (!resilienceSnapshot) return null;
-    const tier = resilienceSnapshot.riskByRoomId[room.id] || 'healthy';
-    const forecastItem = resilienceSnapshot.forecast.byService[room.id];
-    const riskVal = forecastItem?.risk ?? 0;
-    const etaVal = forecastItem?.etaTicks ?? null;
-
-    const topRoot = resilienceSnapshot.rootCause.candidates.find((rc) => rc.serviceId === room.id);
-
-    const evidenceLines: string[] =
-      topRoot && topRoot.reasons && topRoot.reasons.length > 0
-        ? topRoot.reasons
-        : [
-            `Error rate: ${(riskVal * 100).toFixed(1)}% within nominal threshold`,
-            'No active template spike detected in Drain-lite parse tree',
-          ];
-
-    const serviceView = resilienceSnapshot.services.find((s) => s.id === room.id);
-    const isAtRisk = tier === 'high' || tier === 'critical' || tier === 'failed';
-    const recOutcome = resilienceSnapshot.recovery.outcomes.find(
-      (o) => o.strategyId === resilienceSnapshot.recovery.recommendedId
-    );
-
-    const rootCauseRankText = topRoot
-      ? `#${topRoot.rank} root cause (${Math.round(topRoot.confidence * 100)}%)`
-      : 'Not root cause';
-
-    const failTimeText = serviceView?.observedFailed
-      ? 'Failing now'
-      : etaVal !== null
-      ? `fails in ~${Math.max(1, Math.round((etaVal * 10) / 60))} min`
-      : 'Nominal';
+    if (!resilienceSnapshot || !roomResilience) return null;
+    const { tier, riskVal, etaVal, topRoot, isAtRisk, recOutcome, rootCauseRankText, failTimeText, evidenceLines } = roomResilience;
 
     return (
       <div className="room-runtime-risk-block" role="region" aria-label="Runtime Risk Analysis">
@@ -529,10 +566,10 @@ const getPlainStatusText = (status: ArchitecturalRoom['status']) => {
           <button
             type="button"
             className="btn-see-failures"
-            onClick={() => onNavigateToResilience?.(room.id)}
-            title="Switch to Live Risk view focused on this room"
+            onClick={() => setActiveTab('resilience')}
+            title="Inspect cascade graph and recovery comparison for this room"
           >
-            See how failures spread →
+            Inspect cascade &amp; recovery →
           </button>
         </div>
 
@@ -590,6 +627,20 @@ const getPlainStatusText = (status: ArchitecturalRoom['status']) => {
                 Apply Fix →
               </button>
             )}
+          </div>
+        )}
+
+        {onNavigateToResilience && (
+          <div style={{ marginTop: 6, textAlign: 'right' }}>
+            <button
+              type="button"
+              className="ib__link"
+              onClick={() => onNavigateToResilience(room.id)}
+              style={{ fontSize: '0.7rem' }}
+              title="Open full incident dashboard"
+            >
+              Whole project incident brief ↗
+            </button>
           </div>
         )}
       </div>
@@ -762,14 +813,17 @@ const getPlainStatusText = (status: ArchitecturalRoom['status']) => {
           <button
             type="button"
             role="tab"
-            id="tab-simulate"
-            aria-selected={activeTab === 'simulate'}
-            aria-controls="panel-simulate"
-            tabIndex={activeTab === 'simulate' ? 0 : -1}
-            className={`room-tab-btn ${activeTab === 'simulate' ? 'active' : ''}`}
-            onClick={() => setActiveTab('simulate')}
+            id="tab-resilience"
+            aria-selected={activeTab === 'resilience'}
+            aria-controls="panel-resilience"
+            tabIndex={activeTab === 'resilience' ? 0 : -1}
+            className={`room-tab-btn ${activeTab === 'resilience' ? 'active' : ''}`}
+            onClick={() => setActiveTab('resilience')}
           >
-            Simulate
+            ⚡ Runtime &amp; Cascade
+            {roomResilience?.isAtRisk && (
+              <span className="tab-risk-indicator" aria-label="Risk alert">•</span>
+            )}
           </button>
           <button
             type="button"
@@ -782,6 +836,18 @@ const getPlainStatusText = (status: ArchitecturalRoom['status']) => {
             onClick={() => setActiveTab('evidence')}
           >
             Evidence
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="tab-simulate"
+            aria-selected={activeTab === 'simulate'}
+            aria-controls="panel-simulate"
+            tabIndex={activeTab === 'simulate' ? 0 : -1}
+            className={`room-tab-btn ${activeTab === 'simulate' ? 'active' : ''}`}
+            onClick={() => setActiveTab('simulate')}
+          >
+            Simulate
           </button>
           <button
             type="button"
@@ -933,13 +999,156 @@ const getPlainStatusText = (status: ArchitecturalRoom['status']) => {
               </div>
             )}
 
-            {/* Runtime risk block (only in Resilience view) */}
+            {/* Runtime risk block */}
             {resilienceSnapshot && renderRuntimeRiskBlock()}
 
             {/* Room description (1 line) */}
             <p className="room-detail-desc room-desc-line" title={room.description}>
               {room.description}
             </p>
+          </div>
+        )}
+
+        {/* Tab Panel: Runtime Failure & Cascade */}
+        {activeTab === 'resilience' && (
+          <div
+            role="tabpanel"
+            id="panel-resilience"
+            aria-labelledby="tab-resilience"
+            className="room-tab-panel resilience-panel-tab"
+          >
+            {!resilienceSnapshot || !roomResilience ? (
+              <div className="tab-empty-msg">No active runtime simulation snapshot available for this room.</div>
+            ) : (
+              <>
+                {/* 1. Summary KPI & Risk Header */}
+                <div className="runtime-tab-summary-card">
+                  <div className="runtime-summary-head">
+                    <div>
+                      <span className="runtime-summary-title">Operational Risk Analysis</span>
+                      <div className="runtime-summary-sub">
+                        Forecast: {resilienceSnapshot.forecast.label} · t={resilienceSnapshot.tick} ({resilienceSnapshot.simTimeLabel})
+                      </div>
+                    </div>
+                    <span className={`risk-tier-pill risk-tier-${roomResilience.tier}`}>
+                      {roomResilience.tier}
+                    </span>
+                  </div>
+
+                  <div className="risk-block-stats-row">
+                    <div className="risk-stat-item">
+                      <span className="risk-stat-label">Failure Probability</span>
+                      <span className="risk-stat-val">{(roomResilience.riskVal * 100).toFixed(0)}%</span>
+                    </div>
+                    <div className="risk-stat-item">
+                      <span className="risk-stat-label">Lead Time / ETA</span>
+                      <span className="risk-stat-val">{roomResilience.failTimeText}</span>
+                    </div>
+                    <div className="risk-stat-item">
+                      <span className="risk-stat-label">Root Cause Rank</span>
+                      <span className="risk-stat-val" style={{ fontSize: '0.74rem' }}>
+                        {roomResilience.rootCauseRankText}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="risk-signals-box">
+                    <span className="risk-signals-label">Root Cause &amp; Anomaly Signals ({roomResilience.evidenceLines.length}):</span>
+                    <div className="risk-evidence-list">
+                      {roomResilience.topRoot?.evidence && roomResilience.topRoot.evidence.length > 0
+                        ? roomResilience.topRoot.evidence.map((ev, i: number) => (
+                            <div key={i}>
+                              • [{ev.kind} @ t={ev.tick}] {ev.text}
+                            </div>
+                          ))
+                        : roomResilience.evidenceLines.map((ev: string, i: number) => (
+                            <div key={i}>• {ev}</div>
+                          ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Cascade Graph (Reused Component) */}
+                <div className="resilience-workspace-section">
+                  <div className="section-title-row">
+                    <h4 className="section-title">Cascade Graph · Failure Spread</h4>
+                    <span className="section-badge">Interactive Topology</span>
+                  </div>
+                  <CascadeGraph
+                    snapshot={resilienceSnapshot}
+                    allRooms={allRooms}
+                    selectedRoomId={room.id}
+                    onSelectRoom={onSelectRoom || (() => {})}
+                    previewStrategyId={previewStrategyId}
+                  />
+                </div>
+
+                {/* 3. Recovery Strategy Comparison (Reused Component) */}
+                <div className="resilience-workspace-section">
+                  <div className="section-title-row">
+                    <h4 className="section-title">Recovery Strategies · Mitigation Comparison</h4>
+                    <span className="section-badge">Decision Support</span>
+                  </div>
+                  <StrategyComparison
+                    strategies={resilienceSnapshot.recovery.outcomes}
+                    baseline={resilienceSnapshot.recovery.baseline}
+                    recommendedStrategyId={resilienceSnapshot.recovery.recommendedId}
+                    recommendedReason={resilienceSnapshot.recovery.recommendedReason}
+                    weights={resilienceSnapshot.recovery.weights}
+                    onApplyStrategy={(strategyId, targetServiceId) => {
+                      onApplyRecoveryStrategy?.(strategyId, targetServiceId);
+                    }}
+                    onPreviewStrategy={setPreviewStrategyId}
+                    appliedStrategyId={resilienceSnapshot.applied?.strategyId ?? null}
+                    applied={resilienceSnapshot.applied}
+                    onClearStrategy={onClearRecoveryStrategy}
+                  />
+                </div>
+
+                {/* 4. Progressive Disclosure: Timelines, Logs & Detailed Scoring Assumptions */}
+                <div className="progressive-disclosure-section">
+                  <details className="inspector-progressive-details">
+                    <summary className="progressive-details-summary">
+                      📊 Telemetry Signals &amp; Metric Timeline ({roomResilience.relatedIds.length} related services)
+                    </summary>
+                    <div className="progressive-details-content">
+                      <SignalTimeline
+                        snapshot={resilienceSnapshot}
+                        selectedRoomId={room.id}
+                        onSelectRoom={onSelectRoom || (() => {})}
+                        focusedRelatedIds={roomResilience.relatedIds}
+                      />
+                    </div>
+                  </details>
+
+                  <details className="inspector-progressive-details">
+                    <summary className="progressive-details-summary">
+                      📜 Runtime Logs &amp; Drain-Lite Patterns ({resilienceSnapshot.logs.filter((l) => l.serviceId === room.id).length} room entries)
+                    </summary>
+                    <div className="progressive-details-content">
+                      <LogStream
+                        logs={resilienceSnapshot.logs}
+                        templates={resilienceSnapshot.templates}
+                        selectedRoomId={room.id}
+                        selectedRoomName={room.name}
+                        focusedRelatedIds={roomResilience.relatedIds}
+                      />
+                    </div>
+                  </details>
+
+                  <details className="inspector-progressive-details">
+                    <summary className="progressive-details-summary">
+                      ⚖️ Detailed Recovery Rationale &amp; Scoring Assumptions
+                    </summary>
+                    <div className="progressive-details-content recovery-assumptions-box">
+                      <p><strong>Recommendation Reason:</strong> {resilienceSnapshot.recovery.recommendedReason}</p>
+                      <p><strong>Baseline Impact:</strong> Without intervention, {resilienceSnapshot.recovery.baseline?.affectedCount ?? 0} of {resilienceSnapshot.cascade.totalServices} services suffer sustained failure.</p>
+                      <p><strong>Scoring Model:</strong> Ranks outcomes by balancing blast reduction ({resilienceSnapshot.recovery.weights.blast}x), residual risk ({resilienceSnapshot.recovery.weights.residual}x), recovery speed ({resilienceSnapshot.recovery.weights.recovery}x), and operational side-effects (penalty: {resilienceSnapshot.recovery.weights.sideEffect}x).</p>
+                    </div>
+                  </details>
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -1228,6 +1437,16 @@ const getPlainStatusText = (status: ArchitecturalRoom['status']) => {
                   <span className={`classification-pill class-${finding.evidenceClassification}`}>
                     {finding.evidenceClassification.toUpperCase()}
                   </span>
+                  {roomResilience && (
+                    <span className={`risk-tier-pill risk-tier-${roomResilience.tier}`}>
+                      {roomResilience.tier} risk
+                    </span>
+                  )}
+                  {roomResilience && (
+                    <span className="runtime-risk-eta-text" style={{ fontSize: '0.72rem' }}>
+                      {roomResilience.failTimeText}
+                    </span>
+                  )}
                   {(finding.fallbackUsed || finding.provider === 'groq' || finding.providerUsed === 'groq' || finding.provider === 'cloudflare' || finding.providerUsed === 'cloudflare') && (
                     <span
                       className="backup-ai-indicator"
@@ -1269,263 +1488,459 @@ const getPlainStatusText = (status: ArchitecturalRoom['status']) => {
               </div>
             </div>
 
+            {/* View Switcher for Expanded Workspace */}
+            <div className="expanded-view-switcher" role="tablist" aria-label="Expanded reading modes">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={expandedModalTab === 'unified'}
+                className={`btn-modal-tab ${expandedModalTab === 'unified' ? 'active' : ''}`}
+                onClick={() => setExpandedModalTab('unified')}
+              >
+                🔀 Unified (Build + Runtime)
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={expandedModalTab === 'build'}
+                className={`btn-modal-tab ${expandedModalTab === 'build' ? 'active' : ''}`}
+                onClick={() => setExpandedModalTab('build')}
+              >
+                📋 Build Diagnostics &amp; Code
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={expandedModalTab === 'runtime'}
+                className={`btn-modal-tab ${expandedModalTab === 'runtime' ? 'active' : ''}`}
+                onClick={() => setExpandedModalTab('runtime')}
+              >
+                ⚡ Runtime Failure &amp; Cascade
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={expandedModalTab === 'fix'}
+                className={`btn-modal-tab ${expandedModalTab === 'fix' ? 'active' : ''}`}
+                onClick={() => setExpandedModalTab('fix')}
+              >
+                🛠️ Fix Prompt &amp; CI Lifecycle
+              </button>
+            </div>
+
             <div className="expanded-dialog-body">
+              {/* Left Pane */}
               <div className="expanded-left-pane">
-                {/* 1. Finding Overview & Severity */}
-                <section className="expanded-section" aria-label="1. Finding Overview & Severity">
-                  <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>1. DIAGNOSTIC FINDING & SEVERITY</div>
-                  <h4 className="expanded-section-title">{finding.title}</h4>
-                  <p className="expanded-finding-explanation">{finding.explanation}</p>
-                </section>
+                {/* Mode: Unified or Build or Fix */}
+                {(expandedModalTab === 'unified' || expandedModalTab === 'build' || expandedModalTab === 'fix') && (
+                  <>
+                    {/* 1. Finding Overview & Severity */}
+                    <section className="expanded-section" aria-label="1. Finding Overview & Severity">
+                      <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>1. DIAGNOSTIC FINDING & SEVERITY</div>
+                      <h4 className="expanded-section-title">{finding.title}</h4>
+                      <p className="expanded-finding-explanation">{finding.explanation}</p>
+                    </section>
 
-                {/* 2. Why It Matters: User-Visible & System-Level Consequence */}
-                {finding.whyItMatters && (
-                  <section className="expanded-section" aria-label="2. Why It Matters">
-                    <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>2. WHY IT MATTERS (CONSEQUENCE)</div>
-                    <div className="finding-why-it-matters-box">
-                      {finding.whyItMatters}
-                    </div>
-                  </section>
-                )}
-
-                {/* 3. Validated Evidence & Quick Jumps */}
-                <section className="expanded-section" aria-label="3. Validated Evidence & Jumps">
-                  <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>3. VALIDATED EVIDENCE & JUMPS</div>
-                  
-                  {/* Jump buttons connecting finding to source, graph, simulation, related room, and test evidence */}
-                  <div className="finding-nav-jumps-row" role="navigation" aria-label="Expanded evidence navigation jumps">
-                    <button
-                      type="button"
-                      className="btn-jump-pill"
-                      onClick={() => handleJumpTo('graph')}
-                      title="Jump to stage-by-stage architecture graph"
-                    >
-                      📊 Graph view
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-jump-pill"
-                      onClick={() => handleJumpTo('simulation')}
-                      title="Jump to static execution simulation workbench"
-                    >
-                      ⚡ Simulation
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-jump-pill"
-                      onClick={() => handleJumpTo('test_evidence')}
-                      title="Jump to test mapping and CI check evidence chain"
-                    >
-                      🔗 Test evidence
-                    </button>
-                    {finding.codeEvidence && (
-                      <button
-                        type="button"
-                        className="btn-jump-pill"
-                        onClick={() => handleJumpTo('source')}
-                        title="Focus on inspected source excerpt"
-                      >
-                        📄 Source excerpt
-                      </button>
+                    {/* 2. Why It Matters: User-Visible & System-Level Consequence */}
+                    {finding.whyItMatters && (
+                      <section className="expanded-section" aria-label="2. Why It Matters">
+                        <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>2. WHY IT MATTERS (CONSEQUENCE)</div>
+                        <div className="finding-why-it-matters-box">
+                          {finding.whyItMatters}
+                        </div>
+                      </section>
                     )}
-                    {room.dependencies && room.dependencies.map((dep) => (
-                      <button
-                        key={dep}
-                        type="button"
-                        className="btn-jump-pill"
-                        onClick={() => handleJumpTo('related_room', dep)}
-                        title={`Jump to dependent room ${dep}`}
-                      >
-                        🚪 Room: {dep}
-                      </button>
-                    ))}
-                  </div>
 
-                  {finding.codeEvidence && finding.codeEvidence.codeSnippet && (
-                    <div className="finding-code-evidence-box expanded-code-box">
-                      <div className="code-evidence-header">
-                        <span className={`code-evidence-badge ${finding.codeEvidence.isVerified ? 'verified' : 'unverified'}`}>
-                          {finding.codeEvidence.isVerified ? '✓ VERIFIED SOURCE EXCERPT' : '○ UNVERIFIED SNIPPET'}
-                        </span>
-                        <span className="code-evidence-file">
-                          📄 <code>{finding.codeEvidence.filePath}</code>
-                          {finding.codeEvidence.lineRange ? (
-                            <span className="code-line-range-badge">{finding.codeEvidence.lineRange}</span>
-                          ) : finding.codeEvidence.derivedLineNumber ? (
-                            <span className="code-line-range-badge">Line {finding.codeEvidence.derivedLineNumber}</span>
-                          ) : null}
-                        </span>
+                    {/* 3. Validated Evidence & Quick Jumps */}
+                    <section className="expanded-section" aria-label="3. Validated Evidence & Jumps">
+                      <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>3. VALIDATED EVIDENCE & JUMPS</div>
+                      
+                      <div className="finding-nav-jumps-row" role="navigation" aria-label="Expanded evidence navigation jumps">
+                        <button
+                          type="button"
+                          className="btn-jump-pill"
+                          onClick={() => setExpandedModalTab('runtime')}
+                          title="View runtime failure and cascade analysis"
+                        >
+                          ⚡ Runtime risk &amp; cascade
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-jump-pill"
+                          onClick={() => handleJumpTo('graph')}
+                          title="Jump to stage-by-stage architecture graph"
+                        >
+                          📊 Graph view
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-jump-pill"
+                          onClick={() => handleJumpTo('simulation')}
+                          title="Jump to static execution simulation workbench"
+                        >
+                          ⚡ Simulation
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-jump-pill"
+                          onClick={() => handleJumpTo('test_evidence')}
+                          title="Jump to test mapping and CI check evidence chain"
+                        >
+                          🔗 Test evidence
+                        </button>
+                        {finding.codeEvidence && (
+                          <button
+                            type="button"
+                            className="btn-jump-pill"
+                            onClick={() => handleJumpTo('source')}
+                            title="Focus on inspected source excerpt"
+                          >
+                            📄 Source excerpt
+                          </button>
+                        )}
+                        {room.dependencies && room.dependencies.map((dep) => (
+                          <button
+                            key={dep}
+                            type="button"
+                            className="btn-jump-pill"
+                            onClick={() => handleJumpTo('related_room', dep)}
+                            title={`Jump to dependent room ${dep}`}
+                          >
+                            🚪 Room: {dep}
+                          </button>
+                        ))}
                       </div>
-                      <pre className="code-evidence-pre">
-                        <code>{finding.codeEvidence.codeSnippet}</code>
-                      </pre>
-                      {finding.codeEvidence.explanation && (
-                        <div className="code-evidence-note">{finding.codeEvidence.explanation}</div>
-                      )}
-                    </div>
-                  )}
 
-                  {finding.evidenceReferences.length > 0 ? (
-                    <div className="finding-refs-section">
-                      <span className="finding-section-label">VALIDATED FILE REFERENCES:</span>
-                      <ul className="finding-refs-list">
-                        {finding.evidenceReferences.map((ref) => (
-                          <li key={ref.path} className="finding-ref-item">
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                              {ref.githubUrl ? (
-                                <a
-                                  href={ref.githubUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="file-link"
-                                >
-                                  <code>{ref.path}</code> ↗
-                                </a>
-                              ) : (
-                                <code>{ref.path}</code>
-                              )}
-                              {ref.lineRange && (
-                                <span className="code-line-range-badge">{ref.lineRange}</span>
-                              )}
-                            </div>
-                            <span className="ref-inspection-badge">
-                              {ref.isInspected ? 'Inspected in scan' : 'Discovered in tree (uninspected)'}
+                      {finding.codeEvidence && finding.codeEvidence.codeSnippet && (
+                        <div className="finding-code-evidence-box expanded-code-box">
+                          <div className="code-evidence-header">
+                            <span className={`code-evidence-badge ${finding.codeEvidence.isVerified ? 'verified' : 'unverified'}`}>
+                              {finding.codeEvidence.isVerified ? '✓ VERIFIED SOURCE EXCERPT' : '○ UNVERIFIED SNIPPET'}
                             </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : (
-                    <div className="finding-no-refs-note">
-                      No direct source files were observed for this finding.
-                    </div>
-                  )}
-                </section>
-
-                {/* 4. Reasoning: Direct Facts vs Inferences */}
-                {finding.reasoning && (
-                  <section className="expanded-section" aria-label="4. Reasoning: Direct Facts vs Inferences">
-                    <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>4. REASONING (DIRECT FACTS VS INFERENCES)</div>
-                    <div className="finding-reasoning-section">
-                      <div className="reasoning-subgroup">
-                        <span className="reasoning-sub-label">Direct Observed Facts:</span>
-                        {finding.reasoning.facts.map((fact, idx) => (
-                          <div key={idx} className="reasoning-item fact">
-                            <span>✓</span>
-                            <span>{fact}</span>
+                            <span className="code-evidence-file">
+                              📄 <code>{finding.codeEvidence.filePath}</code>
+                              {finding.codeEvidence.lineRange ? (
+                                <span className="code-line-range-badge">{finding.codeEvidence.lineRange}</span>
+                              ) : finding.codeEvidence.derivedLineNumber ? (
+                                <span className="code-line-range-badge">Line {finding.codeEvidence.derivedLineNumber}</span>
+                              ) : null}
+                            </span>
                           </div>
-                        ))}
-                      </div>
-                      <div className="reasoning-subgroup">
-                        <span className="reasoning-sub-label">Architectural Inferences:</span>
-                        {finding.reasoning.inferences.map((inf, idx) => (
-                          <div key={idx} className="reasoning-item inference">
-                            <span>↳</span>
-                            <span>{inf}</span>
+                          <pre className="code-evidence-pre">
+                            <code>{finding.codeEvidence.codeSnippet}</code>
+                          </pre>
+                          {finding.codeEvidence.explanation && (
+                            <div className="code-evidence-note">{finding.codeEvidence.explanation}</div>
+                          )}
+                        </div>
+                      )}
+
+                      {finding.evidenceReferences.length > 0 ? (
+                        <div className="finding-refs-section">
+                          <span className="finding-section-label">VALIDATED FILE REFERENCES:</span>
+                          <ul className="finding-refs-list">
+                            {finding.evidenceReferences.map((ref) => (
+                              <li key={ref.path} className="finding-ref-item">
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                  {ref.githubUrl ? (
+                                    <a
+                                      href={ref.githubUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="file-link"
+                                    >
+                                      <code>{ref.path}</code> ↗
+                                    </a>
+                                  ) : (
+                                    <code>{ref.path}</code>
+                                  )}
+                                  {ref.lineRange && (
+                                    <span className="code-line-range-badge">{ref.lineRange}</span>
+                                  )}
+                                </div>
+                                <span className="ref-inspection-badge">
+                                  {ref.isInspected ? 'Inspected in scan' : 'Discovered in tree (uninspected)'}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : (
+                        <div className="finding-no-refs-note">
+                          No direct source files were observed for this finding.
+                        </div>
+                      )}
+                    </section>
+
+                    {/* 4. Reasoning: Direct Facts vs Inferences */}
+                    {finding.reasoning && (
+                      <section className="expanded-section" aria-label="4. Reasoning: Direct Facts vs Inferences">
+                        <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>4. REASONING (DIRECT FACTS VS INFERENCES)</div>
+                        <div className="finding-reasoning-section">
+                          <div className="reasoning-subgroup">
+                            <span className="reasoning-sub-label">Direct Observed Facts:</span>
+                            {finding.reasoning.facts.map((fact, idx) => (
+                              <div key={idx} className="reasoning-item fact">
+                                <span>✓</span>
+                                <span>{fact}</span>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  </section>
-                )}
-
-                {/* 5. Uncertainties and Limitations */}
-                <section className="expanded-section" aria-label="5. Uncertainties and Limitations">
-                  <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>5. WHAT REMAINS UNCERTAIN</div>
-
-                  {finding.evidenceClassification !== 'observed' && (
-                    <div className="finding-uncertainty-banner" role="status">
-                      ℹ️ <strong>Result Classification: {finding.evidenceClassification.toUpperCase()}</strong>.
-                      {finding.evidenceClassification === 'inferred'
-                        ? ' This diagnosis is derived by architectural inference because exact verified source files or failing CI logs were not directly observed.'
-                        : ' Grounding is limited by missing or uninspected files. Review actual source before acting.'}
-                    </div>
-                  )}
-
-                  {finding.rejectedReferences && finding.rejectedReferences.length > 0 && (
-                    <div className="finding-uncertainty-banner" role="status">
-                      ⚠️ <strong>Ungrounded Files Excluded:</strong> {finding.rejectedReferences.join(', ')} do not exist in the repository tree and were stripped from evidence.
-                    </div>
-                  )}
-
-                  <div className="finding-uncertainties-box">
-                    <strong>Known vs Uncertain:</strong> {finding.uncertainties}
-                  </div>
-                </section>
-
-                {/* 6. Recommendation & Companion Dialogue */}
-                <section className="expanded-section" aria-label="6. Recommendation and Dialogue">
-                  <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>6. RECOMMENDED NEXT STEP</div>
-                  <div className="finding-recommendation-box">
-                    <strong>Next Action:</strong> {finding.recommendedNextStep}
-                  </div>
-
-                  {finding.companionMessages.length > 0 && (
-                    <div className="finding-dialogue-section" style={{ marginTop: 12 }}>
-                      <span className="finding-section-label">AI COMPANION OBSERVATIONS:</span>
-                      {finding.companionMessages.map((msg, idx) => (
-                        <div key={idx} className={`finding-companion-quote ${msg.speaker}`}>
-                          <PixelPetAvatar speaker={msg.speaker} size={22} />
-                          <div>
-                            <span className="quote-speaker">
-                              {msg.speaker === 'dog' ? 'Barkley:' : 'Cleo:'}
-                            </span>{' '}
-                            {msg.text}
+                          <div className="reasoning-subgroup">
+                            <span className="reasoning-sub-label">Architectural Inferences:</span>
+                            {finding.reasoning.inferences.map((inf, idx) => (
+                              <div key={idx} className="reasoning-item inference">
+                                <span>↳</span>
+                                <span>{inf}</span>
+                              </div>
+                            ))}
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
+                      </section>
+                    )}
+
+                    {/* 5. Uncertainties and Limitations */}
+                    <section className="expanded-section" aria-label="5. Uncertainties and Limitations">
+                      <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>5. WHAT REMAINS UNCERTAIN</div>
+
+                      {finding.evidenceClassification !== 'observed' && (
+                        <div className="finding-uncertainty-banner" role="status">
+                          ℹ️ <strong>Result Classification: {finding.evidenceClassification.toUpperCase()}</strong>.
+                          {finding.evidenceClassification === 'inferred'
+                            ? ' This diagnosis is derived by architectural inference because exact verified source files or failing CI logs were not directly observed.'
+                            : ' Grounding is limited by missing or uninspected files. Review actual source before acting.'}
+                        </div>
+                      )}
+
+                      {finding.rejectedReferences && finding.rejectedReferences.length > 0 && (
+                        <div className="finding-uncertainty-banner" role="status">
+                          ⚠️ <strong>Ungrounded Files Excluded:</strong> {finding.rejectedReferences.join(', ')} do not exist in the repository tree and were stripped from evidence.
+                        </div>
+                      )}
+
+                      <div className="finding-uncertainties-box">
+                        <strong>Known vs Uncertain:</strong> {finding.uncertainties}
+                      </div>
+                    </section>
+
+                    {/* 6. Recommendation & Companion Dialogue */}
+                    <section className="expanded-section" aria-label="6. Recommendation and Dialogue">
+                      <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>6. RECOMMENDED NEXT STEP</div>
+                      <div className="finding-recommendation-box">
+                        <strong>Next Action:</strong> {finding.recommendedNextStep}
+                      </div>
+
+                      {finding.companionMessages.length > 0 && (
+                        <div className="finding-dialogue-section" style={{ marginTop: 12 }}>
+                          <span className="finding-section-label">AI COMPANION OBSERVATIONS:</span>
+                          {finding.companionMessages.map((msg, idx) => (
+                            <div key={idx} className={`finding-companion-quote ${msg.speaker}`}>
+                              <PixelPetAvatar speaker={msg.speaker} size={22} />
+                              <div>
+                                <span className="quote-speaker">
+                                  {msg.speaker === 'dog' ? 'Barkley:' : 'Cleo:'}
+                                </span>{' '}
+                                {msg.text}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  </>
+                )}
+
+                {/* Mode: Runtime Failure Analysis Left Column */}
+                {expandedModalTab === 'runtime' && (
+                  <>
+                    <section className="expanded-section" aria-label="Operational Risk Overview">
+                      <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>OPERATIONAL RUNTIME RISK</div>
+                      {roomResilience ? (
+                        <div className="runtime-tab-summary-card">
+                          <div className="runtime-summary-head">
+                            <div>
+                              <span className="runtime-summary-title">Runtime Risk &amp; Lead Time</span>
+                              <div className="runtime-summary-sub">
+                                Forecast: {resilienceSnapshot?.forecast.label}
+                              </div>
+                            </div>
+                            <span className={`risk-tier-pill risk-tier-${roomResilience.tier}`}>
+                              {roomResilience.tier}
+                            </span>
+                          </div>
+
+                          <div className="risk-block-stats-row">
+                            <div className="risk-stat-item">
+                              <span className="risk-stat-label">Failure Probability</span>
+                              <span className="risk-stat-val">{(roomResilience.riskVal * 100).toFixed(0)}%</span>
+                            </div>
+                            <div className="risk-stat-item">
+                              <span className="risk-stat-label">Lead Time / ETA</span>
+                              <span className="risk-stat-val">{roomResilience.failTimeText}</span>
+                            </div>
+                            <div className="risk-stat-item">
+                              <span className="risk-stat-label">Root Cause Rank</span>
+                              <span className="risk-stat-val">{roomResilience.rootCauseRankText}</span>
+                            </div>
+                          </div>
+
+                          <div className="risk-signals-box">
+                            <span className="risk-signals-label">Root Cause Signals ({roomResilience.evidenceLines.length}):</span>
+                            <div className="risk-evidence-list">
+                              {roomResilience.topRoot?.evidence && roomResilience.topRoot.evidence.length > 0
+                                ? roomResilience.topRoot.evidence.map((ev, i: number) => (
+                                    <div key={i}>
+                                      • [{ev.kind} @ t={ev.tick}] {ev.text}
+                                    </div>
+                                  ))
+                                : roomResilience.evidenceLines.map((ev: string, i: number) => (
+                                    <div key={i}>• {ev}</div>
+                                  ))}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="tab-empty-msg">No runtime engine snapshot available.</div>
+                      )}
+                    </section>
+
+                    {resilienceSnapshot && (
+                      <section className="expanded-section" aria-label="Cascade Graph Explorer">
+                        <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>CASCADE TOPOLOGY &amp; PROPAGATION</div>
+                        <CascadeGraph
+                          snapshot={resilienceSnapshot}
+                          allRooms={allRooms}
+                          selectedRoomId={room.id}
+                          onSelectRoom={onSelectRoom || (() => {})}
+                          previewStrategyId={previewStrategyId}
+                        />
+                      </section>
+                    )}
+                  </>
+                )}
+
+                {/* If Unified mode: also include Cascade Graph below build evidence */}
+                {expandedModalTab === 'unified' && resilienceSnapshot && (
+                  <section className="expanded-section" aria-label="Cascade Graph Explorer">
+                    <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>CASCADE TOPOLOGY &amp; SPREAD</div>
+                    <CascadeGraph
+                      snapshot={resilienceSnapshot}
+                      allRooms={allRooms}
+                      selectedRoomId={room.id}
+                      onSelectRoom={onSelectRoom || (() => {})}
+                      previewStrategyId={previewStrategyId}
+                    />
+                  </section>
+                )}
               </div>
 
+              {/* Right Pane */}
               <div className="expanded-right-pane">
-                {/* 7. Repair Prompt Section */}
-                <section className="expanded-section prompt-pane" aria-label="7. Coding Agent Repair Prompt">
-                  <div className="expanded-prompt-header">
-                    <div>
-                      <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>7. CODING AGENT REPAIR PROMPT</div>
-                      <h4 className="expanded-section-title">Coding Agent Repair Prompt</h4>
-                      <p className="prompt-meta-note">
-                        Self-contained prompt with acceptance criteria ready for Antigravity or Claude Code:
-                      </p>
+                {/* Mode: Unified or Runtime: Show Recovery Strategies and Progressive Details */}
+                {(expandedModalTab === 'unified' || expandedModalTab === 'runtime') && resilienceSnapshot && (
+                  <>
+                    <section className="expanded-section" aria-label="Recovery Strategies">
+                      <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>RECOVERY STRATEGIES &amp; MITIGATION</div>
+                      <StrategyComparison
+                        strategies={resilienceSnapshot.recovery.outcomes}
+                        baseline={resilienceSnapshot.recovery.baseline}
+                        recommendedStrategyId={resilienceSnapshot.recovery.recommendedId}
+                        recommendedReason={resilienceSnapshot.recovery.recommendedReason}
+                        weights={resilienceSnapshot.recovery.weights}
+                        onApplyStrategy={(strategyId, targetServiceId) => {
+                          onApplyRecoveryStrategy?.(strategyId, targetServiceId);
+                        }}
+                        onPreviewStrategy={setPreviewStrategyId}
+                        appliedStrategyId={resilienceSnapshot.applied?.strategyId ?? null}
+                        applied={resilienceSnapshot.applied}
+                        onClearStrategy={onClearRecoveryStrategy}
+                      />
+                    </section>
+
+                    <div className="progressive-disclosure-section">
+                      <details className="inspector-progressive-details">
+                        <summary className="progressive-details-summary">
+                          📊 Telemetry Signals &amp; Metric Timeline ({roomResilience?.relatedIds.length ?? 0} related services)
+                        </summary>
+                        <div className="progressive-details-content">
+                          <SignalTimeline
+                            snapshot={resilienceSnapshot}
+                            selectedRoomId={room.id}
+                            onSelectRoom={onSelectRoom || (() => {})}
+                            focusedRelatedIds={roomResilience?.relatedIds ?? null}
+                          />
+                        </div>
+                      </details>
+
+                      <details className="inspector-progressive-details">
+                        <summary className="progressive-details-summary">
+                          📜 Runtime Logs &amp; Drain-Lite Patterns ({resilienceSnapshot.logs.filter((l) => l.serviceId === room.id).length} room entries)
+                        </summary>
+                        <div className="progressive-details-content">
+                          <LogStream
+                            logs={resilienceSnapshot.logs}
+                            templates={resilienceSnapshot.templates}
+                            selectedRoomId={room.id}
+                            selectedRoomName={room.name}
+                            focusedRelatedIds={roomResilience?.relatedIds ?? null}
+                          />
+                        </div>
+                      </details>
                     </div>
-                    {finding.generatedPrompt && (
-                      <button
-                        type="button"
-                        className={`btn-copy-prompt-primary ${copySuccess ? 'copied' : ''}`}
-                        onClick={handleCopyPrompt}
-                        aria-label="Copy repair prompt to clipboard"
-                      >
-                        {copySuccess ? '✓ Copied to clipboard!' : '📋 Copy Prompt'}
-                      </button>
-                    )}
-                  </div>
+                  </>
+                )}
 
-                  {finding.generatedPrompt ? (
-                    <textarea
-                      className="repair-prompt-textarea expanded-textarea"
-                      readOnly
-                      value={finding.generatedPrompt}
-                      aria-label="Coding agent repair prompt content"
-                    />
-                  ) : (
-                    <div className="prompt-empty-note">No prompt generated for this finding.</div>
-                  )}
-                </section>
+                {/* Mode: Unified or Build or Fix: Show Repair Prompt & FixLifecyclePanel */}
+                {(expandedModalTab === 'unified' || expandedModalTab === 'build' || expandedModalTab === 'fix') && (
+                  <>
+                    {/* 7. Repair Prompt Section */}
+                    <section className="expanded-section prompt-pane" aria-label="7. Coding Agent Repair Prompt">
+                      <div className="expanded-prompt-header">
+                        <div>
+                          <div className="finding-section-eyebrow" style={{ marginBottom: 4 }}>7. CODING AGENT REPAIR PROMPT</div>
+                          <h4 className="expanded-section-title">Coding Agent Repair Prompt</h4>
+                          <p className="prompt-meta-note">
+                            Self-contained prompt with acceptance criteria ready for Antigravity or Claude Code:
+                          </p>
+                        </div>
+                        {finding.generatedPrompt && (
+                          <button
+                            type="button"
+                            className={`btn-copy-prompt-primary ${copySuccess ? 'copied' : ''}`}
+                            onClick={handleCopyPrompt}
+                            aria-label="Copy repair prompt to clipboard"
+                          >
+                            {copySuccess ? '✓ Copied to clipboard!' : '📋 Copy Prompt'}
+                          </button>
+                        )}
+                      </div>
 
-                {/* 6. Fix Reporting & Verification Lifecycle Section */}
-                <section className="expanded-section" aria-label="Fix Verification Lifecycle">
-                  <FixLifecyclePanel
-                    finding={finding}
-                    room={room}
-                    scanResult={scanResult}
-                    isSampleActive={isSampleActive}
-                    onRoomUpdated={onRoomUpdated}
-                    savedLifecycleState={savedLifecycleState}
-                    onLifecycleChange={(state) => room && onLifecycleChange?.(room.id, state)}
-                  />
-                </section>
+                      {finding.generatedPrompt ? (
+                        <textarea
+                          className="repair-prompt-textarea expanded-textarea"
+                          readOnly
+                          value={finding.generatedPrompt}
+                          aria-label="Coding agent repair prompt content"
+                        />
+                      ) : (
+                        <div className="prompt-empty-note">No prompt generated for this finding.</div>
+                      )}
+                    </section>
+
+                    {/* 6. Fix Reporting & Verification Lifecycle Section */}
+                    <section className="expanded-section" aria-label="Fix Verification Lifecycle">
+                      <FixLifecyclePanel
+                        finding={finding}
+                        room={room}
+                        scanResult={scanResult}
+                        isSampleActive={isSampleActive}
+                        onRoomUpdated={onRoomUpdated}
+                        savedLifecycleState={savedLifecycleState}
+                        onLifecycleChange={(state) => room && onLifecycleChange?.(room.id, state)}
+                      />
+                    </section>
+                  </>
+                )}
               </div>
             </div>
 

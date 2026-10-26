@@ -68,7 +68,8 @@ export const App: React.FC = () => {
 
   const [activeSnapshot, setActiveSnapshot] = useState<ResilienceSnapshot | null>(null);
   const [riskByRoomId, setRiskByRoomId] = useState<Record<string, RiskTier>>({});
-  const applyStrategyRef = useRef<((stratId: string) => void) | null>(null);
+  const applyStrategyRef = useRef<((stratId: string, targetServiceId?: string) => void) | null>(null);
+  const clearStrategyRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (viewMode === 'resilience') setSelectedRoom(null);
@@ -77,8 +78,6 @@ export const App: React.FC = () => {
 
   const handleViewModeChange = (nextMode: 'blueprint' | 'resilience') => {
     setViewMode(nextMode);
-    // Live Risk leads with the incident brief; the room panel opens only via "Room details".
-    if (nextMode === 'resilience') setSelectedRoom(null);
     try {
       localStorage.setItem('lb.view', nextMode);
     } catch {
@@ -418,27 +417,30 @@ export const App: React.FC = () => {
               height: '100%',
             }}
           >
-            <RoomInspector
-              room={selectedRoom}
-              onClose={() => setSelectedRoom(null)}
-              scanResult={lastScanResult}
-              isSampleActive={isSampleActive}
-              onRoomUpdated={handleRoomUpdated}
-              savedFinding={selectedRoom ? findingsByRoomId[selectedRoom.id] : undefined}
-              onFindingChange={handleFindingChange}
-              savedLifecycleState={selectedRoom ? fixLifecyclesByRoomId[selectedRoom.id] : undefined}
-              onLifecycleChange={handleLifecycleChange}
-              allRooms={rooms}
-              onSelectRoom={(roomId) => {
-                const targetRoom = rooms.find((r) => r.id === roomId);
-                if (targetRoom) {
-                  handleSelectRoom(targetRoom);
-                }
-              }}
-              resilienceSnapshot={activeSnapshot}
-              onApplyRecoveryStrategy={(stratId) => applyStrategyRef.current?.(stratId)}
-              onNavigateToResilience={handleNavigateToResilience}
-            />
+            {viewMode === 'resilience' && (
+              <RoomInspector
+                room={selectedRoom}
+                onClose={() => setSelectedRoom(null)}
+                scanResult={lastScanResult}
+                isSampleActive={isSampleActive}
+                onRoomUpdated={handleRoomUpdated}
+                savedFinding={selectedRoom ? findingsByRoomId[selectedRoom.id] : undefined}
+                onFindingChange={handleFindingChange}
+                savedLifecycleState={selectedRoom ? fixLifecyclesByRoomId[selectedRoom.id] : undefined}
+                onLifecycleChange={handleLifecycleChange}
+                allRooms={rooms}
+                onSelectRoom={(roomId) => {
+                  const targetRoom = rooms.find((r) => r.id === roomId);
+                  if (targetRoom) {
+                    handleSelectRoom(targetRoom);
+                  }
+                }}
+                resilienceSnapshot={activeSnapshot}
+                onApplyRecoveryStrategy={(stratId, targetId) => applyStrategyRef.current?.(stratId, targetId)}
+                onClearRecoveryStrategy={() => clearStrategyRef.current?.()}
+                onNavigateToResilience={handleNavigateToResilience}
+              />
+            )}
 
             <ResilienceDashboard
               onAskAi={(question, focusId) => {
@@ -456,6 +458,9 @@ export const App: React.FC = () => {
               onRegisterApplyStrategy={(fn) => {
                 applyStrategyRef.current = fn;
               }}
+              onRegisterClearStrategy={(fn) => {
+                clearStrategyRef.current = fn;
+              }}
             />
           </div>
 
@@ -463,27 +468,30 @@ export const App: React.FC = () => {
             className="svg-canvas-wrapper"
             style={{ display: viewMode === 'blueprint' ? 'flex' : 'none' }}
           >
-            <RoomInspector
-              room={selectedRoom}
-              onClose={() => setSelectedRoom(null)}
-              scanResult={lastScanResult}
-              isSampleActive={isSampleActive}
-              onRoomUpdated={handleRoomUpdated}
-              savedFinding={selectedRoom ? findingsByRoomId[selectedRoom.id] : undefined}
-              onFindingChange={handleFindingChange}
-              savedLifecycleState={selectedRoom ? fixLifecyclesByRoomId[selectedRoom.id] : undefined}
-              onLifecycleChange={handleLifecycleChange}
-              allRooms={rooms}
-              onSelectRoom={(roomId) => {
-                const targetRoom = rooms.find((r) => r.id === roomId);
-                if (targetRoom) {
-                  handleSelectRoom(targetRoom);
-                }
-              }}
-              resilienceSnapshot={activeSnapshot}
-              onApplyRecoveryStrategy={(stratId) => applyStrategyRef.current?.(stratId)}
-              onNavigateToResilience={handleNavigateToResilience}
-            />
+            {viewMode === 'blueprint' && (
+              <RoomInspector
+                room={selectedRoom}
+                onClose={() => setSelectedRoom(null)}
+                scanResult={lastScanResult}
+                isSampleActive={isSampleActive}
+                onRoomUpdated={handleRoomUpdated}
+                savedFinding={selectedRoom ? findingsByRoomId[selectedRoom.id] : undefined}
+                onFindingChange={handleFindingChange}
+                savedLifecycleState={selectedRoom ? fixLifecyclesByRoomId[selectedRoom.id] : undefined}
+                onLifecycleChange={handleLifecycleChange}
+                allRooms={rooms}
+                onSelectRoom={(roomId) => {
+                  const targetRoom = rooms.find((r) => r.id === roomId);
+                  if (targetRoom) {
+                    handleSelectRoom(targetRoom);
+                  }
+                }}
+                resilienceSnapshot={activeSnapshot}
+                onApplyRecoveryStrategy={(stratId, targetId) => applyStrategyRef.current?.(stratId, targetId)}
+                onClearRecoveryStrategy={() => clearStrategyRef.current?.()}
+                onNavigateToResilience={handleNavigateToResilience}
+              />
+            )}
 
             <IsometricHouse
               rooms={rooms}
