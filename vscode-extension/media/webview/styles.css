@@ -2956,3 +2956,55 @@
   opacity: 0.55;
   cursor: not-allowed;
 }
+/* Build Queue (Part 3.1) */
+.bq-layout { display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: 12px; align-items: start; }
+@media (max-width: 640px) { .bq-layout { grid-template-columns: 1fr; } }
+.bq-heading { font-size: 12px; font-weight: 700; color: #FFFFFF; display: flex; align-items: baseline; gap: 6px; }
+.bq-workspace { font-weight: 400; color: var(--text-muted); font-size: 11px; }
+.bq-form { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.bq-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-top: 4px; }
+.bq-label-hint { font-weight: 400; color: var(--text-muted); }
+.bq-input { width: 100%; background: var(--bg-main); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 6px 8px; font-family: var(--font-sans); font-size: 12px; resize: vertical; }
+.bq-input:focus-visible { outline: none; border-color: var(--accent-light); box-shadow: 0 0 0 1px var(--accent-light); }
+.bq-input:disabled { opacity: 0.5; cursor: not-allowed; }
+.bq-form-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
+.bq-tasks { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.bq-tasks-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.bq-summary { display: flex; flex-wrap: wrap; gap: 6px; }
+.bq-list { display: flex; flex-direction: column; gap: 8px; }
+.bq-empty { background: var(--bg-surface); border: 1px dashed var(--border-subtle); border-radius: 6px; padding: 18px 14px; text-align: center; color: var(--text-secondary); font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+.bq-empty strong { color: var(--text-primary); }
+.bq-card { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-left: 3px solid var(--status-planned); border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.bq-card-ready { border-left-color: var(--accent-light); }
+.bq-card-handed_off { border-left-color: var(--status-progress); }
+.bq-card-implemented { border-left-color: var(--status-verified); }
+.bq-card-blocked { border-left-color: var(--status-blocked); }
+.bq-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.bq-card-title { font-size: 12.5px; font-weight: 700; color: #FFFFFF; overflow-wrap: anywhere; }
+.bq-card-desc { font-size: 12px; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+.bq-criteria { font-size: 11.5px; color: var(--text-primary); padding-left: 18px; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+.bq-note { font-size: 11px; color: var(--text-muted); font-style: italic; }
+.bq-blocker { font-size: 11.5px; color: #E28383; background: var(--status-blocked-bg); border: 1px solid var(--status-blocked); border-radius: 4px; padding: 5px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bq-meta { font-size: 10px; color: var(--text-muted); font-family: var(--font-mono); }
+.bq-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.bq-btn-danger { margin-left: auto; }
+.bq-btn-danger:hover { border-color: var(--status-blocked); }
+.bq-chip { display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 10px; border: 1px solid; white-space: nowrap; }
+.bq-status-planned { background: var(--status-planned-bg); color: #B0A29C; border-color: var(--status-planned); }
+.bq-status-ready { background: var(--bg-surface-elevated); color: #E6C3A8; border-color: var(--accent-light); }
+.bq-status-handed_off { background: var(--status-progress-bg); color: #E0B565; border-color: var(--status-progress); }
+.bq-status-implemented { background: var(--status-verified-bg); color: #A8D4A5; border-color: var(--status-verified); }
+.bq-status-blocked { background: var(--status-blocked-bg); color: #E28383; border-color: var(--status-blocked); }
+.bq-notice { font-size: 11.5px; padding: 6px 10px; border-radius: 4px; margin-bottom: 10px; border: 1px solid var(--border-subtle); background: var(--bg-surface); color: var(--text-primary); }
+.bq-notice-success { background: var(--status-verified-bg); border-color: var(--status-verified); color: #A8D4A5; }
+.bq-notice-error { background: var(--status-blocked-bg); border-color: var(--status-blocked); color: #E28383; }
+.bq-text-success { color: #A8D4A5; }
+.bq-text-error { color: #E28383; }
+.bq-dialog { background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 12px; width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 48px); box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+.bq-dialog[open] { display: flex; flex-direction: column; gap: 10px; }
+.bq-dialog::backdrop { background: rgba(0,0,0,0.55); }
+.bq-dialog-header, .bq-dialog-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.bq-dialog-status { font-size: 11px; color: var(--text-muted); }
+.bq-prompt { flex: 1; min-height: 120px; overflow: auto; background: var(--bg-main); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 10px; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bq-prompt:focus-visible { outline: 1px solid var(--accent-light); }
+.bq-block-form { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border-subtle); padding-top: 8px; }

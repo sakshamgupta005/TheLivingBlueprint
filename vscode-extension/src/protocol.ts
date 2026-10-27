@@ -23,6 +23,9 @@ export const ALLOWED_COMMANDS = [
   'requestEvidenceChain',
   'runProjectTests',
   'reinspectFinding',
+  'requestBuildTasks',
+  'createBuildTask',
+  'buildTaskAction',
 ] as const;
 
 /** Mirrors LENS_IDS in core/lenses.ts (existing GraphViewMode identifiers). */
@@ -126,6 +129,44 @@ export interface RequestPayloadPreviewMessage {
   command: 'requestPayloadPreview';
 }
 
+export const BUILD_TASK_STATUSES = [
+  'planned',
+  'ready',
+  'handed_off',
+  'implemented',
+  'blocked',
+] as const;
+export type BuildTaskStatus = (typeof BUILD_TASK_STATUSES)[number];
+
+export const BUILD_TASK_ACTIONS = [
+  'approve',
+  'previewPrompt',
+  'copyPrompt',
+  'markImplemented',
+  'markBlocked',
+  'reopen',
+  'delete',
+] as const;
+export type BuildTaskAction = (typeof BUILD_TASK_ACTIONS)[number];
+
+export interface RequestBuildTasksMessage {
+  command: 'requestBuildTasks';
+}
+
+export interface CreateBuildTaskMessage {
+  command: 'createBuildTask';
+  title: string;
+  description: string;
+  acceptanceCriteria: string[];
+}
+
+export interface BuildTaskActionMessage {
+  command: 'buildTaskAction';
+  taskId: string;
+  action: BuildTaskAction;
+  blockerNote?: string;
+}
+
 export type ValidInboundMessage =
   | RequestPayloadPreviewMessage
   | ClearConversationMessage
@@ -136,6 +177,9 @@ export type ValidInboundMessage =
   | RequestEvidenceChainMessage
   | RunProjectTestsMessage
   | ReinspectFindingMessage
+  | RequestBuildTasksMessage
+  | CreateBuildTaskMessage
+  | BuildTaskActionMessage
   | OpenFileMessage
   | RefreshMessage
   | AskCompanionMessage
@@ -183,6 +227,12 @@ const MAX_QUESTION_LENGTH = 4096;
 const MAX_ROOM_ID_LENGTH = 256;
 const MIN_LINE_NUMBER = 1;
 const MAX_LINE_NUMBER = 1_000_000;
+export const MAX_TASK_TITLE_LENGTH = 160;
+export const MAX_TASK_DESC_LENGTH = 2000;
+export const MAX_TASK_CRITERIA_COUNT = 15;
+export const MAX_TASK_CRITERIA_LENGTH = 400;
+export const MAX_TASK_ID_LENGTH = 128;
+export const MAX_BLOCKER_NOTE_LENGTH = 1000;
 
 /** Validates a roomId that must exist in the current snapshot (no snapshot means no valid room). */
 function requireRoomId(
@@ -418,6 +468,93 @@ export function validateInboundMessage(
         message: {
           command: 'selectFolder',
           folderPath: obj.folderPath,
+        },
+      };
+    }
+
+    case 'requestBuildTasks': {
+      return { valid: true, message: { command: 'requestBuildTasks' } };
+    }
+
+    case 'createBuildTask': {
+      if (typeof obj.title !== 'string' || obj.title.trim().length === 0) {
+        return reject('createBuildTask requires a non-empty string title');
+      }
+      if (obj.title.length > MAX_TASK_TITLE_LENGTH) {
+        return reject(`title exceeds maximum length of ${MAX_TASK_TITLE_LENGTH}`);
+      }
+
+      if (obj.description !== undefined && obj.description !== null) {
+        if (typeof obj.description !== 'string') {
+          return reject('description must be a string');
+        }
+        if (obj.description.length > MAX_TASK_DESC_LENGTH) {
+          return reject(`description exceeds maximum length of ${MAX_TASK_DESC_LENGTH}`);
+        }
+      }
+
+      if (obj.acceptanceCriteria !== undefined && obj.acceptanceCriteria !== null) {
+        if (!Array.isArray(obj.acceptanceCriteria)) {
+          return reject('acceptanceCriteria must be an array of strings');
+        }
+        if (obj.acceptanceCriteria.length > MAX_TASK_CRITERIA_COUNT) {
+          return reject(`acceptanceCriteria exceeds maximum count of ${MAX_TASK_CRITERIA_COUNT}`);
+        }
+        for (const item of obj.acceptanceCriteria) {
+          if (typeof item !== 'string') {
+            return reject('acceptanceCriteria items must be strings');
+          }
+          if (item.length > MAX_TASK_CRITERIA_LENGTH) {
+            return reject(`acceptanceCriteria item exceeds maximum length of ${MAX_TASK_CRITERIA_LENGTH}`);
+          }
+        }
+      }
+
+      const cleanedCriteria = Array.isArray(obj.acceptanceCriteria)
+        ? obj.acceptanceCriteria.map((c) => String(c).trim()).filter((c) => c.length > 0)
+        : [];
+
+      return {
+        valid: true,
+        message: {
+          command: 'createBuildTask',
+          title: obj.title.trim(),
+          description: typeof obj.description === 'string' ? obj.description.trim() : '',
+          acceptanceCriteria: cleanedCriteria,
+        },
+      };
+    }
+
+    case 'buildTaskAction': {
+      if (typeof obj.taskId !== 'string' || obj.taskId.trim().length === 0) {
+        return reject('buildTaskAction requires a non-empty string taskId');
+      }
+      if (obj.taskId.length > MAX_TASK_ID_LENGTH) {
+        return reject(`taskId exceeds maximum length of ${MAX_TASK_ID_LENGTH}`);
+      }
+      if (typeof obj.action !== 'string' || !BUILD_TASK_ACTIONS.includes(obj.action as BuildTaskAction)) {
+        return reject(`action must be one of: ${BUILD_TASK_ACTIONS.join(', ')}`);
+      }
+
+      const rawNote = obj.blockerNote ?? obj.note;
+      let blockerNote: string | undefined;
+      if (rawNote !== undefined && rawNote !== null) {
+        if (typeof rawNote !== 'string') {
+          return reject('blockerNote must be a string');
+        }
+        if (rawNote.length > MAX_BLOCKER_NOTE_LENGTH) {
+          return reject(`blockerNote exceeds maximum length of ${MAX_BLOCKER_NOTE_LENGTH}`);
+        }
+        blockerNote = rawNote.trim();
+      }
+
+      return {
+        valid: true,
+        message: {
+          command: 'buildTaskAction',
+          taskId: obj.taskId.trim(),
+          action: obj.action as BuildTaskAction,
+          blockerNote,
         },
       };
     }

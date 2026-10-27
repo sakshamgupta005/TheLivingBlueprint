@@ -47,6 +47,7 @@
     <button class="tab-btn" id="tabCompanions">🐾 Barkley &amp; Cleo</button>
     <button class="tab-btn" id="tabGraph">🕸 Architecture Graph</button>
     <button class="tab-btn" id="tabLedger">📋 Room Ledger</button>
+    <button class="tab-btn" id="tabQueue">🧱 Build Queue</button>
   </div>
 
   <!-- Metrics Bar -->
@@ -388,6 +389,48 @@
       <strong>Deterministic Status Engine:</strong> Verified requires executed test artifacts; discovered code produces Implemented.
     </div>
     <div class="ledger-list" id="ledgerList"></div>
+  </div>
+
+  <!-- Panel 5: Build Queue -->
+  <div id="panelQueue" class="hidden">
+    <div class="truth-banner">
+      <strong>Build Queue:</strong> Plan a task, approve it, then hand the generated prompt to your coding agent. "Implemented" is your confirmation, not automatic verification.
+    </div>
+    <div class="bq-notice hidden" id="bqNotice" role="status" aria-live="polite"></div>
+    <div class="bq-layout">
+      <form class="bq-form" id="bqForm" novalidate>
+        <h3 class="bq-heading">New task</h3>
+        <p class="text-empty-hint hidden" id="bqWorkspaceHint">Open a workspace folder to create and save tasks.</p>
+        <label class="bq-label" for="bqTitle">Title</label>
+        <input class="bq-input" id="bqTitle" type="text" maxlength="160" required autocomplete="off" placeholder="e.g. Add rate limiting to login">
+        <label class="bq-label" for="bqDescription">Description</label>
+        <textarea class="bq-input" id="bqDescription" rows="4" maxlength="2000" placeholder="What should change, and why?"></textarea>
+        <label class="bq-label" for="bqCriteria">Acceptance criteria <span class="bq-label-hint">(one per line)</span></label>
+        <textarea class="bq-input" id="bqCriteria" rows="4" placeholder="Returns 429 after 5 failed attempts&#10;Existing login tests still pass"></textarea>
+        <div class="bq-form-actions">
+          <button type="submit" class="btn-action btn-accent" id="bqCreateBtn">＋ Create task</button>
+        </div>
+      </form>
+      <section class="bq-tasks" aria-labelledby="bqTasksHeading">
+        <div class="bq-tasks-header">
+          <h3 class="bq-heading" id="bqTasksHeading">Tasks <span class="bq-workspace" id="bqWorkspaceName"></span></h3>
+          <button type="button" class="btn-action" id="bqRefreshBtn" title="Reload tasks from the extension">↻ Refresh</button>
+        </div>
+        <div class="bq-summary" id="bqSummary"></div>
+        <div class="bq-list" id="bqList"></div>
+      </section>
+    </div>
+    <dialog class="bq-dialog" id="bqPromptDialog" aria-labelledby="bqPromptTitle">
+      <div class="bq-dialog-header">
+        <h3 class="bq-heading" id="bqPromptTitle">Prompt preview</h3>
+        <button type="button" class="btn-action" id="bqPromptClose" aria-label="Close prompt preview">✕</button>
+      </div>
+      <pre class="bq-prompt" id="bqPromptBody" tabindex="0"></pre>
+      <div class="bq-dialog-actions">
+        <span class="bq-dialog-status" id="bqPromptStatus" role="status" aria-live="polite"></span>
+        <button type="button" class="btn-action btn-accent" id="bqPromptCopy">⧉ Copy prompt</button>
+      </div>
+    </dialog>
   </div>
 
   <script nonce="{{nonce}}" src="{{scriptUri}}"></script>

@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import type { WorkspaceBlueprintData } from './workspaceScanner.ts';
 import type { CompanionAnalysisResult } from './companionEngine.ts';
-import { validateInboundMessage, type ExplanationLevelValue, type ArchitectureLensIdValue } from './protocol.ts';
+import { validateInboundMessage, type ExplanationLevelValue, type ArchitectureLensIdValue, type BuildTaskAction } from './protocol.ts';
 import { resolveWorkspaceFile } from './pathResolver.ts';
 
 export type AskCompanionHandler = (
@@ -40,6 +40,10 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
   private _onRequestEvidenceChain?: (roomId: string) => void;
   private _onRunProjectTests?: () => Promise<void>;
   private _onReinspectFinding?: (roomId: string) => Promise<void>;
+  private _onRequestBuildTasks?: () => Promise<void> | void;
+  private _onCreateBuildTask?: (title: string, description: string, acceptanceCriteria: string[]) => Promise<void> | void;
+  private _onBuildTaskAction?: (taskId: string, action: BuildTaskAction, blockerNote?: string) => Promise<void> | void;
+  private _latestTasksMessage?: unknown;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -61,6 +65,9 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
       onRequestEvidenceChain?: (roomId: string) => void;
       onRunProjectTests?: () => Promise<void>;
       onReinspectFinding?: (roomId: string) => Promise<void>;
+      onRequestBuildTasks?: () => Promise<void> | void;
+      onCreateBuildTask?: (title: string, description: string, acceptanceCriteria: string[]) => Promise<void> | void;
+      onBuildTaskAction?: (taskId: string, action: BuildTaskAction, blockerNote?: string) => Promise<void> | void;
     }
   ) {
     if (handlers) {
@@ -80,6 +87,9 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
       this._onRequestEvidenceChain = handlers.onRequestEvidenceChain;
       this._onRunProjectTests = handlers.onRunProjectTests;
       this._onReinspectFinding = handlers.onReinspectFinding;
+      this._onRequestBuildTasks = handlers.onRequestBuildTasks;
+      this._onCreateBuildTask = handlers.onCreateBuildTask;
+      this._onBuildTaskAction = handlers.onBuildTaskAction;
     }
   }
 
@@ -133,6 +143,9 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
     if (this._latestFolders) {
       webviewView.webview.postMessage({ type: 'workspaceFolders', ...this._latestFolders });
     }
+    if (this._latestTasksMessage) {
+      webviewView.webview.postMessage(this._latestTasksMessage);
+    }
     this._replayHostState(webviewView.webview);
   }
 
@@ -168,6 +181,9 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
     }
     if (this._latestFolders) {
       panel.webview.postMessage({ type: 'workspaceFolders', ...this._latestFolders });
+    }
+    if (this._latestTasksMessage) {
+      panel.webview.postMessage(this._latestTasksMessage);
     }
     this._replayHostState(panel.webview);
   }
@@ -214,11 +230,12 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
     if (!validation.valid) {
       console.warn(`[Living Blueprint] Inbound message rejected: ${validation.reason}`);
       // Tell the UI so a pending spinner or watchdog can stop instead of hanging.
-      const raw = rawMessage as { command?: unknown; roomId?: unknown } | null;
+      const raw = rawMessage as { command?: unknown; roomId?: unknown; taskId?: unknown } | null;
       this._postToAll({
         type: 'requestRejected',
         command: typeof raw?.command === 'string' ? raw.command.slice(0, 64) : undefined,
         roomId: typeof raw?.roomId === 'string' ? raw.roomId.slice(0, 256) : undefined,
+        taskId: typeof raw?.taskId === 'string' ? raw.taskId.slice(0, 128) : undefined,
         reason: validation.reason,
       });
       return;
@@ -354,6 +371,18 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
         }
         break;
       }
+      case 'requestBuildTasks': {
+        await this._onRequestBuildTasks?.();
+        break;
+      }
+      case 'createBuildTask': {
+        await this._onCreateBuildTask?.(message.title, message.description, message.acceptanceCriteria);
+        break;
+      }
+      case 'buildTaskAction': {
+        await this._onBuildTaskAction?.(message.taskId, message.action, message.blockerNote);
+        break;
+      }
     }
   }
 
@@ -414,6 +443,12 @@ export class BlueprintViewProvider implements vscode.WebviewViewProvider {
       type: 'companionThinking',
       isThinking,
     });
+  }
+
+  public postBuildTasks(tasks: unknown[], workspaceAvailable: boolean, workspaceName?: string) {
+    const message = { type: 'buildTasks', tasks, workspaceAvailable, workspaceName };
+    this._latestTasksMessage = message;
+    this._postToAll(message);
   }
 
   private _getHtmlForWebview(webview: vscode.Webview): string {

@@ -15,15 +15,17 @@
   const tabCompanions = document.getElementById('tabCompanions');
   const tabGraph = document.getElementById('tabGraph');
   const tabLedger = document.getElementById('tabLedger');
+  const tabQueue = document.getElementById('tabQueue');
 
   const panelHouse = document.getElementById('panelHouse');
   const panelCompanions = document.getElementById('panelCompanions');
   const panelGraph = document.getElementById('panelGraph');
   const panelLedger = document.getElementById('panelLedger');
+  const panelQueue = document.getElementById('panelQueue');
 
   function setActiveTab(activeBtn, activePanel) {
-    [tabHouse, tabCompanions, tabGraph, tabLedger].forEach((b) => b && b.classList.remove('active'));
-    [panelHouse, panelCompanions, panelGraph, panelLedger].forEach((p) => p && p.classList.add('hidden'));
+    [tabHouse, tabCompanions, tabGraph, tabLedger, tabQueue].forEach((b) => b && b.classList.remove('active'));
+    [panelHouse, panelCompanions, panelGraph, panelLedger, panelQueue].forEach((p) => p && p.classList.add('hidden'));
     if (activeBtn) activeBtn.classList.add('active');
     if (activePanel) activePanel.classList.remove('hidden');
   }
@@ -41,6 +43,12 @@
     });
   }
   if (tabLedger) tabLedger.addEventListener('click', () => setActiveTab(tabLedger, panelLedger));
+  if (tabQueue) {
+    tabQueue.addEventListener('click', () => {
+      setActiveTab(tabQueue, panelQueue);
+      requestBuildTasks();
+    });
+  }
 
   // Action Buttons
   const refreshBtn = document.getElementById('refreshBtn');
@@ -3238,12 +3246,400 @@
     investigationPanel.appendChild(reinspectSec);
   }
 
+  // Build Queue (Part 3.1) — renders host-owned task state; never assumes success before a host reply.
+  const BQ_STATUS_LABELS = {
+    planned: 'Planned',
+    ready: 'Ready',
+    handed_off: 'Handed off',
+    implemented: 'Implemented (user-confirmed)',
+    blocked: 'Blocked',
+  };
+  const BQ_ACTION_LABELS = {
+    approve: '✓ Approve',
+    previewPrompt: '🔍 Preview prompt',
+    copyPrompt: '⧉ Copy prompt',
+    markImplemented: '✓ Mark implemented',
+    markBlocked: '⚠ Mark blocked',
+    reopen: '↺ Reopen',
+    delete: '🗑 Delete',
+  };
+  const BQ_ACTIONS_BY_STATUS = {
+    planned: ['approve'],
+    ready: ['previewPrompt', 'copyPrompt'],
+    handed_off: ['markImplemented', 'markBlocked', 'previewPrompt'],
+    implemented: ['reopen'],
+    blocked: ['reopen'],
+  };
+  const BQ_PRIMARY = { approve: 1, copyPrompt: 1, markImplemented: 1 };
+  const BQ_TIMEOUT_MS = 15000;
+
+  const bqForm = document.getElementById('bqForm');
+  const bqTitle = document.getElementById('bqTitle');
+  const bqDescription = document.getElementById('bqDescription');
+  const bqCriteria = document.getElementById('bqCriteria');
+  const bqCreateBtn = document.getElementById('bqCreateBtn');
+  const bqList = document.getElementById('bqList');
+  const bqSummary = document.getElementById('bqSummary');
+  const bqNotice = document.getElementById('bqNotice');
+  const bqWorkspaceHint = document.getElementById('bqWorkspaceHint');
+  const bqWorkspaceName = document.getElementById('bqWorkspaceName');
+  const bqPromptDialog = document.getElementById('bqPromptDialog');
+  const bqPromptTitle = document.getElementById('bqPromptTitle');
+  const bqPromptBody = document.getElementById('bqPromptBody');
+  const bqPromptStatus = document.getElementById('bqPromptStatus');
+  const bqPromptCopy = document.getElementById('bqPromptCopy');
+
+  let bqTasks = [];
+  let bqWorkspaceAvailable = true;
+  let bqPendingCreate = null; // timer id while a create request is in flight
+  const bqPending = new Map(); // taskId -> { action, timer }
+  let bqPreviewTaskId = null;
+  let bqConfirmDeleteId = null;
+  let bqBlockingId = null; // task showing the inline blocker-note form
+  let bqBlockNoteDraft = ''; // survives re-renders while the form is open
+
+  function requestBuildTasks() {
+    vscode.postMessage({ command: 'requestBuildTasks' });
+  }
+
+  function showBqNotice(text, kind) {
+    if (!bqNotice) return;
+    bqNotice.textContent = text;
+    bqNotice.className = 'bq-notice bq-notice-' + (kind || 'info');
+  }
+
+  function setBqCreatePending(on) {
+    if (bqPendingCreate) clearTimeout(bqPendingCreate);
+    bqPendingCreate = on
+      ? setTimeout(() => {
+          bqPendingCreate = null;
+          syncBqFormState();
+          showBqNotice('No response from the extension while creating the task. Try again.', 'error');
+        }, BQ_TIMEOUT_MS)
+      : null;
+    syncBqFormState();
+  }
+
+  function syncBqFormState() {
+    const disabled = !bqWorkspaceAvailable || !!bqPendingCreate;
+    [bqTitle, bqDescription, bqCriteria].forEach((el) => el && (el.disabled = !bqWorkspaceAvailable));
+    if (bqCreateBtn) {
+      bqCreateBtn.disabled = disabled;
+      bqCreateBtn.textContent = bqPendingCreate ? 'Creating…' : '＋ Create task';
+    }
+    if (bqWorkspaceHint) bqWorkspaceHint.classList.toggle('hidden', bqWorkspaceAvailable);
+  }
+
+  function clearBqPending(taskId) {
+    const p = bqPending.get(taskId);
+    if (p) clearTimeout(p.timer);
+    bqPending.delete(taskId);
+    syncBqPromptCopy();
+  }
+
+  function sendBuildTaskAction(taskId, action, blockerNote) {
+    if (!taskId || bqPending.has(taskId)) return;
+    const timer = setTimeout(() => {
+      bqPending.delete(taskId);
+      renderBuildQueue();
+      syncBqPromptCopy();
+      showBqNotice('No response from the extension for "' + (BQ_ACTION_LABELS[action] || action) + '". Try again.', 'error');
+    }, BQ_TIMEOUT_MS);
+    bqPending.set(taskId, { action, timer });
+    const msg = { command: 'buildTaskAction', taskId, action };
+    if (blockerNote) msg.blockerNote = blockerNote;
+    vscode.postMessage(msg);
+    renderBuildQueue();
+    syncBqPromptCopy();
+  }
+
+  function syncBqPromptCopy() {
+    if (!bqPromptCopy) return;
+    const pending = bqPreviewTaskId && bqPending.get(bqPreviewTaskId);
+    bqPromptCopy.disabled = !!pending;
+    bqPromptCopy.textContent = pending && pending.action === 'copyPrompt' ? 'Copying…' : '⧉ Copy prompt';
+  }
+
+  function formatBqDate(value) {
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  }
+
+  function bqEl(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text !== undefined && text !== null) el.textContent = String(text);
+    return el;
+  }
+
+  function renderBqSummary() {
+    if (!bqSummary) return;
+    bqSummary.textContent = '';
+    if (!bqTasks.length) return;
+    const counts = {};
+    bqTasks.forEach((t) => (counts[t.status] = (counts[t.status] || 0) + 1));
+    Object.keys(BQ_STATUS_LABELS).forEach((status) => {
+      if (!counts[status]) return;
+      const chip = bqEl('span', 'bq-chip bq-status-' + status);
+      chip.appendChild(bqEl('strong', null, counts[status]));
+      chip.appendChild(document.createTextNode(' ' + (status === 'implemented' ? 'Implemented' : BQ_STATUS_LABELS[status])));
+      bqSummary.appendChild(chip);
+    });
+  }
+
+  function renderBqCard(task) {
+    const card = bqEl('article', 'bq-card bq-card-' + task.status);
+    const pending = bqPending.get(task.id);
+
+    const top = bqEl('div', 'bq-card-top');
+    top.appendChild(bqEl('h4', 'bq-card-title', task.title || 'Untitled task'));
+    top.appendChild(bqEl('span', 'bq-chip bq-status-' + task.status, BQ_STATUS_LABELS[task.status] || task.status));
+    card.appendChild(top);
+
+    if (task.description) card.appendChild(bqEl('p', 'bq-card-desc', task.description));
+
+    const criteria = Array.isArray(task.acceptanceCriteria) ? task.acceptanceCriteria : [];
+    if (criteria.length) {
+      const ul = bqEl('ul', 'bq-criteria');
+      ul.setAttribute('aria-label', 'Acceptance criteria');
+      criteria.forEach((c) => ul.appendChild(bqEl('li', null, c)));
+      card.appendChild(ul);
+    }
+
+    if (task.status === 'blocked') {
+      card.appendChild(bqEl('p', 'bq-blocker', task.blockerNote ? 'Blocker: ' + task.blockerNote : 'Blocked — no blocker note supplied.'));
+    } else if (task.status === 'implemented') {
+      card.appendChild(bqEl('p', 'bq-note', 'Confirmed by you. Not automatically verified — run tests to establish evidence.'));
+    } else if (task.status === 'handed_off') {
+      card.appendChild(bqEl('p', 'bq-note', 'Prompt handed to your coding agent. Report back when it is done or blocked.'));
+    }
+
+    const meta = bqEl('div', 'bq-meta');
+    const created = formatBqDate(task.createdAt);
+    const updated = formatBqDate(task.updatedAt);
+    meta.textContent = [created && 'Created ' + created, updated && updated !== created && 'Updated ' + updated].filter(Boolean).join(' · ');
+    card.appendChild(meta);
+
+    const actions = bqEl('div', 'bq-actions');
+    (BQ_ACTIONS_BY_STATUS[task.status] || []).concat('delete').forEach((action) => {
+      const isConfirm = action === 'delete' && bqConfirmDeleteId === task.id;
+      const label = pending && pending.action === action ? 'Working…' : isConfirm ? '🗑 Confirm delete' : BQ_ACTION_LABELS[action];
+      const btn = bqEl('button', 'btn-action' + (BQ_PRIMARY[action] ? ' btn-accent' : '') + (action === 'delete' ? ' bq-btn-danger' : ''), label);
+      btn.type = 'button';
+      btn.disabled = !!pending;
+      btn.dataset.taskId = task.id;
+      btn.dataset.action = action;
+      if (action === 'delete') btn.setAttribute('aria-label', isConfirm ? 'Confirm delete ' + task.title : 'Delete ' + task.title);
+      actions.appendChild(btn);
+    });
+    card.appendChild(actions);
+
+    if (bqBlockingId === task.id && task.status === 'handed_off') {
+      const form = bqEl('div', 'bq-block-form');
+      const noteId = 'bqBlockNote-' + task.id;
+      const label = bqEl('label', 'bq-label', 'What is blocking this task? (optional)');
+      label.htmlFor = noteId;
+      const note = bqEl('textarea', 'bq-input');
+      note.id = noteId;
+      note.rows = 2;
+      note.maxLength = 1000;
+      note.disabled = !!pending;
+      note.value = bqBlockNoteDraft;
+      note.addEventListener('input', () => (bqBlockNoteDraft = note.value));
+      const row = bqEl('div', 'bq-actions');
+      const confirm = bqEl('button', 'btn-action btn-accent', pending ? 'Working…' : '⚠ Confirm blocked');
+      confirm.type = 'button';
+      confirm.disabled = !!pending;
+      confirm.dataset.taskId = task.id;
+      confirm.dataset.action = 'confirmBlocked';
+      const cancel = bqEl('button', 'btn-action', 'Cancel');
+      cancel.type = 'button';
+      cancel.disabled = !!pending;
+      cancel.dataset.taskId = task.id;
+      cancel.dataset.action = 'cancelBlocked';
+      row.appendChild(confirm);
+      row.appendChild(cancel);
+      form.appendChild(label);
+      form.appendChild(note);
+      form.appendChild(row);
+      card.appendChild(form);
+    }
+    return card;
+  }
+
+  function renderBuildQueue() {
+    if (!bqList) return;
+    renderBqSummary();
+    bqList.textContent = '';
+    if (!bqTasks.length) {
+      const empty = bqEl('div', 'bq-empty');
+      empty.appendChild(bqEl('strong', null, 'No tasks yet'));
+      empty.appendChild(
+        bqEl(
+          'p',
+          null,
+          bqWorkspaceAvailable
+            ? 'Create your first task with the form. Approve it to generate a coding-agent prompt you can preview and copy.'
+            : 'Open a workspace folder to start a Build Queue.'
+        )
+      );
+      bqList.appendChild(empty);
+      return;
+    }
+    bqTasks.forEach((t) => bqList.appendChild(renderBqCard(t)));
+  }
+
+  if (bqList) {
+    bqList.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-action]');
+      if (!btn || btn.disabled) return;
+      const { taskId, action } = btn.dataset;
+      if (action === 'delete' && bqConfirmDeleteId !== taskId) {
+        bqConfirmDeleteId = taskId;
+        renderBuildQueue();
+        const again = bqList.querySelector('button[data-action="delete"][data-task-id="' + CSS.escape(taskId) + '"]');
+        if (again) again.focus();
+        return;
+      }
+      bqConfirmDeleteId = null;
+      if (action === 'markBlocked') {
+        bqBlockingId = taskId;
+        bqBlockNoteDraft = '';
+        renderBuildQueue();
+        const note = document.getElementById('bqBlockNote-' + taskId);
+        if (note) note.focus();
+        return;
+      }
+      if (action === 'cancelBlocked') {
+        bqBlockingId = null;
+        renderBuildQueue();
+        return;
+      }
+      if (action === 'confirmBlocked') {
+        const note = document.getElementById('bqBlockNote-' + taskId);
+        sendBuildTaskAction(taskId, 'markBlocked', note ? note.value.trim() : '');
+        return;
+      }
+      sendBuildTaskAction(taskId, action);
+    });
+  }
+
+  if (bqForm) {
+    bqForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (bqPendingCreate || !bqWorkspaceAvailable) return;
+      const title = bqTitle.value.trim();
+      if (!title) {
+        showBqNotice('Give the task a title.', 'error');
+        bqTitle.focus();
+        return;
+      }
+      const acceptanceCriteria = bqCriteria.value
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+      // Mirror host limits (protocol.ts) so users get a clear message instead of a generic rejection.
+      if (acceptanceCriteria.length > 15 || acceptanceCriteria.some((c) => c.length > 400)) {
+        showBqNotice('Use at most 15 acceptance criteria, each under 400 characters.', 'error');
+        bqCriteria.focus();
+        return;
+      }
+      setBqCreatePending(true);
+      vscode.postMessage({ command: 'createBuildTask', title, description: bqDescription.value.trim(), acceptanceCriteria });
+    });
+  }
+
+  const bqRefreshBtn = document.getElementById('bqRefreshBtn');
+  if (bqRefreshBtn) bqRefreshBtn.addEventListener('click', requestBuildTasks);
+
+  const bqPromptClose = document.getElementById('bqPromptClose');
+  if (bqPromptClose) bqPromptClose.addEventListener('click', () => bqPromptDialog.close());
+  if (bqPromptDialog) bqPromptDialog.addEventListener('close', () => (bqPreviewTaskId = null));
+  if (bqPromptCopy) {
+    bqPromptCopy.addEventListener('click', () => {
+      if (!bqPreviewTaskId) return;
+      if (bqPromptStatus) bqPromptStatus.textContent = '';
+      sendBuildTaskAction(bqPreviewTaskId, 'copyPrompt');
+    });
+  }
+
+  function handleBuildTasks(msg) {
+    bqTasks = Array.isArray(msg.tasks) ? msg.tasks : [];
+    bqWorkspaceAvailable = msg.workspaceAvailable !== false;
+    if (bqWorkspaceName) bqWorkspaceName.textContent = msg.workspaceName ? '· ' + msg.workspaceName : '';
+    // A workspace switch replaces the list: drop UI state for tasks that are no longer present.
+    const has = (id) => bqTasks.some((t) => t.id === id);
+    for (const id of Array.from(bqPending.keys())) {
+      if (!has(id)) clearBqPending(id);
+    }
+    if (bqConfirmDeleteId && !has(bqConfirmDeleteId)) bqConfirmDeleteId = null;
+    const blocking = bqTasks.find((t) => t.id === bqBlockingId);
+    if (!blocking || blocking.status !== 'handed_off') bqBlockingId = null;
+    if (bqPreviewTaskId && !has(bqPreviewTaskId) && bqPromptDialog && bqPromptDialog.open) bqPromptDialog.close();
+    syncBqFormState();
+    renderBuildQueue();
+  }
+
+  function handleBuildTaskActionResult(msg) {
+    const label = BQ_ACTION_LABELS[msg.action] ? BQ_ACTION_LABELS[msg.action].replace(/^\S+\s/, '') : msg.action || 'Request';
+    const text = msg.message || (msg.ok ? label + ' succeeded.' : label + ' failed.');
+    if (msg.action === 'create') {
+      // Host replies with action 'create' (taskId is the new id on success, '' on failure).
+      setBqCreatePending(false);
+      if (msg.ok) bqForm.reset();
+    } else if (msg.taskId) {
+      clearBqPending(msg.taskId);
+      if (msg.ok && msg.action === 'markBlocked') bqBlockingId = null;
+    }
+    // The preview dialog itself is the success signal; only surface preview failures.
+    if (msg.action !== 'previewPrompt' || !msg.ok) showBqNotice(text, msg.ok ? 'success' : 'error');
+    if (bqPromptStatus && msg.taskId && msg.taskId === bqPreviewTaskId && msg.action === 'copyPrompt') {
+      bqPromptStatus.textContent = msg.ok ? '✓ Copied to clipboard' : '⚠ ' + text;
+      bqPromptStatus.className = 'bq-dialog-status ' + (msg.ok ? 'bq-text-success' : 'bq-text-error');
+    }
+    renderBuildQueue();
+  }
+
+  function handleBuildTaskPromptPreview(msg) {
+    clearBqPending(msg.taskId);
+    bqPreviewTaskId = msg.taskId;
+    if (bqPromptTitle) bqPromptTitle.textContent = 'Prompt preview — ' + (msg.title || 'task');
+    if (bqPromptBody) bqPromptBody.textContent = msg.body || '';
+    if (bqPromptStatus) {
+      bqPromptStatus.textContent = '';
+      bqPromptStatus.className = 'bq-dialog-status';
+    }
+    syncBqPromptCopy();
+    if (bqPromptDialog && !bqPromptDialog.open) bqPromptDialog.showModal();
+    renderBuildQueue();
+  }
+
+  function handleBuildQueueRejected(msg) {
+    // Host rejections carry only command/reason (no taskId), so release every pending action.
+    if (msg.command === 'createBuildTask') setBqCreatePending(false);
+    else Array.from(bqPending.keys()).forEach(clearBqPending);
+    showBqNotice('Request rejected: ' + (msg.reason || 'rejected by host.'), 'error');
+    renderBuildQueue();
+  }
+
+  renderBuildQueue();
+  requestBuildTasks();
+
   // Message Listener
   window.addEventListener('message', (event) => {
     const msg = event.data;
     if (!msg || typeof msg !== 'object') return;
 
     switch (msg.type) {
+      case 'buildTasks':
+        handleBuildTasks(msg);
+        break;
+      case 'buildTaskActionResult':
+        handleBuildTaskActionResult(msg);
+        break;
+      case 'buildTaskPromptPreview':
+        handleBuildTaskPromptPreview(msg);
+        break;
       case 'scanState': {
         if (msg.state && (msg.state.status === 'scanning' || msg.state.isStale)) {
           cachedEvidenceChains = {};
@@ -3557,6 +3953,10 @@
       }
       case 'requestRejected': {
         const cmd = msg.command;
+        if (cmd === 'createBuildTask' || cmd === 'buildTaskAction' || cmd === 'requestBuildTasks') {
+          handleBuildQueueRejected(msg);
+          break;
+        }
         const reason = msg.reason || 'Request rejected by host.';
         if (cmd === 'askCompanion') {
           stopWatchdogTimer();

@@ -16,7 +16,8 @@ import type { ArchitectureLensIdValue } from './protocol.ts';
 import { applyLocalTestEvidence, createTestRunStore, runObservedTests } from './core/localEvidence.ts';
 import { executeTestTask } from './testRunner.ts';
 import { reinspectFinding } from './core/localReinspection.ts';
-import type { ExplanationLevelValue } from './protocol.ts';
+import { createBuildTaskManager } from './core/buildTasks.ts';
+import type { ExplanationLevelValue, BuildTaskAction } from './protocol.ts';
 import {
   ScanController,
   type WorkspaceFolderInfo,
@@ -573,6 +574,146 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   };
 
+  // Part 3.1: Task orchestration store and handlers (isolated per workspace folder).
+  const taskManager = createBuildTaskManager(context.workspaceState);
+
+  const getActiveWorkspaceInfo = () => {
+    const folderPath = scanController.getActiveFolderPath();
+    const folder = vscode.workspace.workspaceFolders?.find(
+      (f) => f.uri.fsPath === folderPath || (folderPath && f.uri.fsPath.toLowerCase() === folderPath.toLowerCase())
+    );
+    return {
+      folderUri: folder?.uri.toString(),
+      folderPath,
+      workspaceAvailable: Boolean(folder),
+      workspaceName: folder?.name,
+    };
+  };
+
+  const postBuildTasks = () => {
+    const info = getActiveWorkspaceInfo();
+    const tasks = info.folderUri ? taskManager.getTasks(info.folderUri) : [];
+    provider.postBuildTasks(tasks, info.workspaceAvailable, info.workspaceName);
+  };
+
+  const handleRequestBuildTasks = () => {
+    postBuildTasks();
+  };
+
+  const handleCreateBuildTask = async (
+    title: string,
+    description: string,
+    acceptanceCriteria: string[]
+  ) => {
+    const info = getActiveWorkspaceInfo();
+    if (!info.folderUri) {
+      provider.post({
+        type: 'buildTaskActionResult',
+        taskId: '',
+        action: 'create',
+        ok: false,
+        message: 'No active workspace folder is open.',
+      });
+      return;
+    }
+    const result = await taskManager.createTask(info.folderUri, {
+      title,
+      description,
+      acceptanceCriteria,
+    });
+    if (result.ok) {
+      provider.post({
+        type: 'buildTaskActionResult',
+        taskId: result.task.id,
+        action: 'create',
+        ok: true,
+        message: 'Task created successfully.',
+      });
+      postBuildTasks();
+    } else {
+      provider.post({
+        type: 'buildTaskActionResult',
+        taskId: '',
+        action: 'create',
+        ok: false,
+        message: result.message,
+      });
+    }
+  };
+
+  const handleBuildTaskAction = async (
+    taskId: string,
+    action: BuildTaskAction,
+    blockerNote?: string
+  ) => {
+    const info = getActiveWorkspaceInfo();
+    if (!info.folderUri) {
+      provider.post({
+        type: 'buildTaskActionResult',
+        taskId,
+        action,
+        ok: false,
+        message: 'No active workspace folder is open.',
+      });
+      return;
+    }
+
+    if (action === 'markBlocked' && !blockerNote && vscode.window?.showInputBox) {
+      const reason = await vscode.window.showInputBox({
+        title: 'Mark Task as Blocked',
+        prompt: 'Enter a concise reason or note explaining the blocker',
+        placeHolder: 'e.g. Missing dependency or awaiting upstream schema',
+        ignoreFocusOut: true,
+      });
+      if (reason === undefined) {
+        provider.post({
+          type: 'buildTaskActionResult',
+          taskId,
+          action: 'markBlocked',
+          ok: false,
+          message: 'Mark blocked cancelled.',
+        });
+        return;
+      }
+      blockerNote = reason.trim();
+    }
+    const snapshot = currentSnapshot();
+    const result = await taskManager.executeAction(info.folderUri, taskId, action, {
+      blockerNote,
+      workspaceName: info.workspaceName,
+      snapshot,
+      copyToClipboard: async (text: string) => {
+        try {
+          await vscode.env.clipboard.writeText(text);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    });
+
+    if (action === 'previewPrompt' && result.prompt) {
+      provider.post({
+        type: 'buildTaskPromptPreview',
+        taskId,
+        title: result.prompt.title,
+        body: result.prompt.body,
+      });
+    }
+
+    provider.post({
+      type: 'buildTaskActionResult',
+      taskId,
+      action,
+      ok: result.ok,
+      message: result.message,
+    });
+
+    if (result.ok && action !== 'previewPrompt') {
+      postBuildTasks();
+    }
+  };
+
   const provider = new BlueprintViewProvider(context.extensionUri, initialFolder, {
     onRefreshRequested: () => scanController.requestScan(true),
     onAskCompanion: handleAskCompanion,
@@ -589,6 +730,7 @@ export async function activate(context: vscode.ExtensionContext) {
       provider.postWorkspaceFolders(folderInfos, folderPath);
       void refreshSecurityState(); // consent is per folder
       postConversation(); // conversation is per folder
+      postBuildTasks(); // tasks are per folder
     },
     onRequestPayloadPreview: buildPreview,
     onRoomSelected: () => cancelInFlight(), // a room switch supersedes the pending question
@@ -599,6 +741,9 @@ export async function activate(context: vscode.ExtensionContext) {
     onRunProjectTests: handleRunProjectTests,
     onReinspectFinding: handleReinspectFinding,
     onRequestEvidenceChain: handleRequestEvidenceChain,
+    onRequestBuildTasks: handleRequestBuildTasks,
+    onCreateBuildTask: handleCreateBuildTask,
+    onBuildTaskAction: handleBuildTaskAction,
     onSetExplanationLevel: async (level) => {
       const folderUri = activeFolderUri();
       if (folderUri) await chatStore.setExplanationLevel(folderUri, level);
@@ -628,6 +773,7 @@ export async function activate(context: vscode.ExtensionContext) {
       provider.updateData(latestData, companionAnalysis);
       postConversation();
       postTestEvidenceState();
+      postBuildTasks();
 
       if (isStale) {
         provider.postScanState({
@@ -646,6 +792,7 @@ export async function activate(context: vscode.ExtensionContext) {
   provider.onViewReady = () => {
     postConversation(true);
     postTestEvidenceState();
+    postBuildTasks();
   };
 
   context.subscriptions.push(
@@ -718,6 +865,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     scanController.setFolders(folderInfos);
     provider.postWorkspaceFolders(folderInfos, scanController.getActiveFolderPath());
+    postBuildTasks();
   };
 
   context.subscriptions.push(
@@ -765,6 +913,7 @@ export async function activate(context: vscode.ExtensionContext) {
       getScanState: () => scanController.getState(),
       getRoomIds: () => (latestData?.rooms ?? []).map((r) => r.id),
       getFingerprint: () => currentFingerprint(),
+      getTasks: (folderUri: string) => taskManager.getTasks(folderUri),
       /** Drives the real validated webview message path. */
       dispatch: (message: unknown) => provider.handleInboundMessage(message),
       /** Observes host→webview messages (undefined to stop). */

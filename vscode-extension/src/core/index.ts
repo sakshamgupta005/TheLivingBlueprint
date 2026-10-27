@@ -7,3 +7,4 @@ export * from './fingerprint.ts';
 export * from './snapshot.ts';
 export * from './chatRequest.ts';
 export * from './investigateRequest.ts';
+export * from './buildTasks.ts';
